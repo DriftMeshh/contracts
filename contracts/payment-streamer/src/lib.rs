@@ -137,3 +137,122 @@ impl PaymentStreamer {
         env.storage().temporary().has(&DataKey::Claimed(device, epoch))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Symbol;
+
+    fn create_token<'a>(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'a>, token::Client<'a>) {
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let address = sac.address();
+        (
+            address.clone(),
+            token::StellarAssetClient::new(env, &address),
+            token::Client::new(env, &address),
+        )
+    }
+
+    /// Wires up device-registry + submission-validator + payment-streamer
+    /// and submits one reading so `claim` has something real to pay out
+    /// against, rather than a mocked submission count.
+    fn setup(env: &Env) -> (PaymentStreamerClient<'static>, Address, token::Client<'static>, i128) {
+        let admin = Address::generate(env);
+
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(env, &registry_id);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(submission_validator::SubmissionValidator, ());
+        let validator_client = submission_validator::SubmissionValidatorClient::new(env, &validator_id);
+        validator_client.initialize(&admin, &registry_id, &2000);
+
+        let device = Address::generate(env);
+        let owner = Address::generate(env);
+        let device_type = Symbol::new(env, "weather");
+        registry_client.register_device(&device, &owner, &device_type, &0, &0);
+        validator_client.submit_reading(&device, &device_type, &1, &7, &2500);
+        validator_client.submit_reading(&device, &device_type, &1, &7, &2600);
+
+        let (token_addr, token_admin_client, token_client) = create_token(env, &admin);
+
+        let rate: i128 = 50;
+        let streamer_id = env.register(PaymentStreamer, ());
+        let streamer_client = PaymentStreamerClient::new(env, &streamer_id);
+        streamer_client.initialize(&admin, &validator_id, &token_addr, &rate);
+
+        // Fund the streamer's own balance, exactly like subscription-market
+        // would by transferring subscriber payments straight to it.
+        token_admin_client.mint(&streamer_id, &1_000);
+
+        (streamer_client, device, token_client, rate)
+    }
+
+    #[test]
+    fn claim_pays_submission_count_times_rate() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (streamer, device, token_client, rate) = setup(&env);
+
+        let payout = streamer.claim(&device, &7);
+        assert_eq!(payout, 2 * rate);
+        assert_eq!(token_client.balance(&device), 2 * rate);
+        assert_eq!(streamer.pool_balance(), 1_000 - 2 * rate);
+    }
+
+    #[test]
+    fn double_claim_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (streamer, device, _token_client, _rate) = setup(&env);
+
+        streamer.claim(&device, &7);
+        let result = streamer.try_claim(&device, &7);
+        assert_eq!(result, Err(Ok(Error::AlreadyClaimed)));
+    }
+
+    #[test]
+    fn claim_with_no_submissions_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (streamer, device, _token_client, _rate) = setup(&env);
+
+        // Epoch 8 has no submitted readings for this device.
+        let result = streamer.try_claim(&device, &8);
+        assert_eq!(result, Err(Ok(Error::NothingToClaim)));
+    }
+
+    #[test]
+    fn payout_is_capped_by_pool_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(&env, &registry_id);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(submission_validator::SubmissionValidator, ());
+        let validator_client = submission_validator::SubmissionValidatorClient::new(&env, &validator_id);
+        validator_client.initialize(&admin, &registry_id, &2000);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let device_type = Symbol::new(&env, "weather");
+        registry_client.register_device(&device, &owner, &device_type, &0, &0);
+        validator_client.submit_reading(&device, &device_type, &1, &9, &2500);
+
+        let (token_addr, token_admin_client, token_client) = create_token(&env, &admin);
+        let rate: i128 = 1_000; // deliberately larger than the funded pool
+        let streamer_id = env.register(PaymentStreamer, ());
+        let streamer_client = PaymentStreamerClient::new(&env, &streamer_id);
+        streamer_client.initialize(&admin, &validator_id, &token_addr, &rate);
+        token_admin_client.mint(&streamer_id, &100); // pool holds far less than `rate`
+
+        let payout = streamer_client.claim(&device, &9);
+        assert_eq!(payout, 100);
+        assert_eq!(token_client.balance(&device), 100);
+        assert_eq!(streamer_client.pool_balance(), 0);
+    }
+}

@@ -1,0 +1,21 @@
+[package]
+name = "tests-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# This crate only exists to hold cross-contract integration tests. It is
+# never built to wasm and is not a dependency of anything else — the four
+# real contracts stay independently deployable (see the notes in
+# submission-validator and payment-streamer). Depending on all four
+# implementation crates directly is fine here because this is a native
+# test binary, not another contract.
+[lib]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+device-registry = { path = "../device-registry" }
+submission-validator = { path = "../submission-validator" }
+payment-streamer = { path = "../payment-streamer" }
+subscription-market = { path = "../subscription-market" }

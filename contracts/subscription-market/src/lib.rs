@@ -126,3 +126,88 @@ impl SubscriptionMarket {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+
+    fn create_token<'a>(env: &Env, admin: &Address) -> (Address, token::StellarAssetClient<'a>, token::Client<'a>) {
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let address = sac.address();
+        (
+            address.clone(),
+            token::StellarAssetClient::new(env, &address),
+            token::Client::new(env, &address),
+        )
+    }
+
+    const PRICE: i128 = 200;
+    const PERIOD_SECONDS: u64 = 86_400; // 1 day, for a readable test
+
+    fn setup(env: &Env) -> (SubscriptionMarketClient<'static>, Address, token::Client<'static>, Address) {
+        let admin = Address::generate(env);
+        let (token_addr, token_admin_client, token_client) = create_token(env, &admin);
+        let reward_pool = Address::generate(env); // stand-in for payment-streamer's address
+
+        let market_id = env.register(SubscriptionMarket, ());
+        let market_client = SubscriptionMarketClient::new(env, &market_id);
+        market_client.initialize(&admin, &token_addr, &reward_pool, &PRICE, &PERIOD_SECONDS);
+
+        let subscriber = Address::generate(env);
+        token_admin_client.mint(&subscriber, &10_000);
+
+        (market_client, subscriber, token_client, reward_pool)
+    }
+
+    #[test]
+    fn subscribe_transfers_payment_straight_to_reward_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, subscriber, token_client, reward_pool) = setup(&env);
+
+        market.subscribe(&subscriber, &3);
+
+        assert_eq!(token_client.balance(&reward_pool), PRICE * 3);
+        assert_eq!(token_client.balance(&subscriber), 10_000 - PRICE * 3);
+        assert!(market.is_active(&subscriber));
+    }
+
+    #[test]
+    fn expiry_extends_on_top_of_an_active_subscription() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, subscriber, _token_client, _reward_pool) = setup(&env);
+
+        let first_expiry = market.subscribe(&subscriber, &1);
+        let second_expiry = market.subscribe(&subscriber, &1);
+
+        // Still within the first period, so the second purchase should
+        // extend from the first expiry, not from "now" — i.e. the two
+        // periods stack rather than overlap.
+        assert_eq!(second_expiry, first_expiry + PERIOD_SECONDS);
+    }
+
+    #[test]
+    fn inactive_after_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, subscriber, _token_client, _reward_pool) = setup(&env);
+
+        market.subscribe(&subscriber, &1);
+        assert!(market.is_active(&subscriber));
+
+        env.ledger().with_mut(|li| li.timestamp += PERIOD_SECONDS + 1);
+        assert!(!market.is_active(&subscriber));
+    }
+
+    #[test]
+    fn zero_periods_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, subscriber, _token_client, _reward_pool) = setup(&env);
+
+        let result = market.try_subscribe(&subscriber, &0);
+        assert_eq!(result, Err(Ok(Error::InvalidPeriods)));
+    }
+}

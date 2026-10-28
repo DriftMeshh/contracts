@@ -13,6 +13,8 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-# Only needed to deploy a real validator instance in tests; production code
-# calls it through the lightweight trait-based client below.
+# Only needed to deploy real validator/registry instances in tests so
+# `claim` can be exercised against real submission counts; production code
+# calls the validator through the lightweight trait-based client below.
 submission-validator = { path = "../submission-validator" }
+device-registry = { path = "../device-registry" }

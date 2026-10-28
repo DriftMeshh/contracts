@@ -5,6 +5,7 @@ members = [
     "contracts/submission-validator",
     "contracts/payment-streamer",
     "contracts/subscription-market",
+    "contracts/tests-e2e",
 ]
 
 [workspace.dependencies]

@@ -1191,6 +1191,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "payment-streamer"
 version = "0.1.0"
 dependencies = [
+ "device-registry",
  "soroban-sdk",
  "submission-validator",
 ]
@@ -1841,6 +1842,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tests-e2e"
+version = "0.1.0"
+dependencies = [
+ "device-registry",
+ "payment-streamer",
+ "soroban-sdk",
+ "submission-validator",
+ "subscription-market",
 ]
 
 [[package]]

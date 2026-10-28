@@ -65,6 +65,10 @@ or two methods it actually needs to call on its neighbour.)
   v1 so the full loop is demoable without physical sensors.
 - **No storage TTL/rent management** is implemented on the temporary
   per-epoch counters yet — see the issues list below.
+- **No live-network testing yet.** All 13 tests (unit + cross-contract +
+  one full end-to-end flow in `tests-e2e`, covering register → submit →
+  subscribe → claim across all four contracts) run in Soroban's in-process
+  test environment, not against an actual testnet/futurenet deployment.
 - **Deprecated event API.** All four contracts currently use
   `env.events().publish(...)` directly, which soroban-sdk 29 flags as
   deprecated in favor of the `#[contractevent]` macro. Left as-is because
@@ -79,7 +83,7 @@ Requires Rust stable with the `wasm32v1-none` target, and the Stellar CLI
 
 ```bash
 rustup target add wasm32v1-none
-cargo test --workspace        # run unit + cross-contract integration tests
+cargo test --workspace        # 13 tests: per-contract units + one full e2e flow in tests-e2e
 stellar contract build        # produces target/wasm32v1-none/release/*.wasm
 ```
 
@@ -90,7 +94,6 @@ Scoped so each is a separable GitHub issue at a realistic complexity tier:
 **Trivial (100 pts)**
 - Migrate `env.events().publish` calls to the `#[contractevent]` macro in each contract
 - Add `pool_balance`-style view helpers to `subscription-market` (e.g. `get_price`)
-- Write unit tests for `payment-streamer` using a mock/test token (currently has none — needs a deployed test SAC)
 - Add doc comments / a CONTRIBUTING.md
 
 **Medium (150 pts)**
@@ -103,4 +106,4 @@ Scoped so each is a separable GitHub issue at a realistic complexity tier:
 - Design and implement stake-weighted outlier scoring (replace the simple rolling-average check in `submission-validator` with something resistant to a device slowly dragging its own region average)
 - Implement partial/dispute-based slashing for devices caught submitting bad data
 - Add a global per-epoch submission total to `submission-validator` so `payment-streamer` can pay *proportional* shares instead of a flat per-submission rate (closer to how Stellar Wave itself does quadratic-scaled payouts)
-- Build the `device-sdk` ↔ `submission-validator` ↔ `payment-streamer` end-to-end integration test against a local Stellar testnet
+- Deploy all four contracts to Stellar testnet and extend `tests-e2e`'s flow into a real integration test against a live network (today it only runs in Soroban's in-process test environment)
