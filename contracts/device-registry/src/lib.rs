@@ -7,7 +7,7 @@
 //! produces, and a coarse location. Downstream contracts (submission
 //! validation, payouts) check in here before trusting a device's data.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone)]
@@ -35,6 +35,17 @@ pub enum Error {
     DeviceAlreadyRegistered = 3,
     DeviceNotFound = 4,
     NotOwnerOrAdmin = 5,
+}
+
+/// Emitted when a device is successfully registered.
+/// Topics: ["reg_dev", device_address]
+/// Data: device_type
+#[contractevent]
+#[derive(Clone)]
+pub struct RegDev {
+    #[topic]
+    pub device: Address,
+    pub device_type: Symbol,
 }
 
 #[contract]
@@ -80,8 +91,11 @@ impl DeviceRegistry {
             active: true,
         };
         env.storage().persistent().set(&key, &record);
-        env.events()
-            .publish((symbol_short!("reg_dev"), device), record.device_type.clone());
+        RegDev {
+            device,
+            device_type: record.device_type.clone(),
+        }
+        .publish(&env);
         Ok(())
     }
 

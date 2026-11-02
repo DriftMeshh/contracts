@@ -10,7 +10,7 @@
 //! simply capped by whatever balance is actually here.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
 };
 
 /// Calling interface for `submission-validator` — see the matching note in
@@ -37,6 +37,18 @@ pub enum Error {
     AlreadyInitialized = 2,
     AlreadyClaimed = 3,
     NothingToClaim = 4,
+}
+
+/// Emitted when a device successfully claims its payout for an epoch.
+/// Topics: ["claimed", device_address]
+/// Data: (epoch, payout)
+#[contractevent]
+#[derive(Clone)]
+pub struct Claimed {
+    #[topic]
+    pub device: Address,
+    pub epoch: u32,
+    pub payout: i128,
 }
 
 #[contract]
@@ -116,8 +128,12 @@ impl PaymentStreamer {
         env.storage().temporary().set(&claimed_key, &true);
         env.storage().temporary().extend_ttl(&claimed_key, 120_960, 120_960);
 
-        env.events()
-            .publish((symbol_short!("claimed"), device), (epoch, payout));
+        Claimed {
+            device,
+            epoch,
+            payout,
+        }
+        .publish(&env);
 
         Ok(payout)
     }
