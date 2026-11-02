@@ -15,7 +15,7 @@
 //! explicitly left as follow-up Wave issues — see README.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol,
 };
 
 /// Calling interface for `device-registry` — deliberately just the one
@@ -44,6 +44,20 @@ pub enum Error {
     NotInitialized = 1,
     AlreadyInitialized = 2,
     DeviceNotActive = 3,
+}
+
+/// Emitted when a reading is submitted (accepted or rejected by outlier check).
+/// Topics: ["reading", device_address]
+/// Data: (region_code, epoch, value, accepted)
+#[contractevent]
+#[derive(Clone)]
+pub struct Reading {
+    #[topic]
+    pub device: Address,
+    pub region_code: u32,
+    pub epoch: u32,
+    pub value: i32,
+    pub accepted: bool,
 }
 
 #[contract]
@@ -118,10 +132,14 @@ impl SubmissionValidator {
             env.storage().temporary().extend_ttl(&count_key, 120_960, 120_960);
         }
 
-        env.events().publish(
-            (symbol_short!("reading"), device),
-            (region_code, epoch, value, accepted),
-        );
+        Reading {
+            device,
+            region_code,
+            epoch,
+            value,
+            accepted,
+        }
+        .publish(&env);
 
         Ok(accepted)
     }

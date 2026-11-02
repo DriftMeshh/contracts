@@ -7,7 +7,7 @@
 //! balance — this contract never custodies funds itself — closing the
 //! loop: subscribers fund the pool, devices claim out of it.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env};
+use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env};
 
 #[contracttype]
 pub enum DataKey {
@@ -26,6 +26,18 @@ pub enum Error {
     NotInitialized = 1,
     AlreadyInitialized = 2,
     InvalidPeriods = 3,
+}
+
+/// Emitted when a subscriber purchases or extends their subscription.
+/// Topics: ["subscribe", subscriber_address]
+/// Data: (periods, new_expiry)
+#[contractevent]
+#[derive(Clone)]
+pub struct Subscribe {
+    #[topic]
+    pub subscriber: Address,
+    pub periods: u32,
+    pub new_expiry: u64,
 }
 
 #[contract]
@@ -94,8 +106,12 @@ impl SubscriptionMarket {
         let new_expiry = base + period_seconds * periods as u64;
 
         env.storage().persistent().set(&expiry_key, &new_expiry);
-        env.events()
-            .publish((symbol_short!("subscribe"), subscriber), (periods, new_expiry));
+        Subscribe {
+            subscriber,
+            periods,
+            new_expiry,
+        }
+        .publish(&env);
 
         Ok(new_expiry)
     }
