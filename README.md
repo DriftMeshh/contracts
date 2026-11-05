@@ -58,21 +58,25 @@ or two methods it actually needs to call on its neighbour.)
 - **Device data is self-reported.** A sensor can lie. The outlier check
   catches a single device being wildly out of line with its neighbours —
   it is not a consensus mechanism and does not stop coordinated fraud.
-  This is the same trust model every DePIN network uses (Helium, WeatherXM,
-  DIMO); hardening it with stake-weighted scoring or slashing is a
-  deliberate v2, not something glossed over here.
+  v1 now includes a dispute/slashing mechanism (see `raise_dispute`,
+  `resolve_dispute` in `device-registry` and `get_rejected_count` /
+  `AutoSlashThresholdReached` in `submission-validator`). An upheld dispute
+  deactivates the device. The admin is trusted to make the resolution
+  decision honestly — a multi-sig admin hardens this without any contract
+  changes. Hardening further with stake-weighted scoring is a deliberate v2.
 - **No real hardware yet.** `device-sdk` ships as a reading simulator for
   v1 so the full loop is demoable without physical sensors.
-- **No storage TTL/rent management** is implemented on the temporary
-  per-epoch counters yet — see the issues list below.
-- **No live-network testing yet.** All 18 tests (unit + cross-contract +
-  one full end-to-end flow in `tests-e2e`, covering register → submit →
-  subscribe → claim across all four contracts) run in Soroban's in-process
+- **No storage TTL/rent management** is fully solved: persistent entries in
+  `device-registry` and `subscription-market` now call `extend_ttl` at
+  write time to prevent archival. Temporary counters in
+  `submission-validator` and `payment-streamer` use TTL extension on every
+  write (120,960 ledgers / ~1 week).
+- **No live-network testing yet.** All 30 tests (unit + cross-contract +
+  one full end-to-end flow in `tests-e2e`) run in Soroban's in-process
   test environment, not against an actual testnet/futurenet deployment.
-- **Deprecated event API.** All four contracts currently use
-  `env.events().publish(...)` directly, which soroban-sdk 29 flags as
-  deprecated in favor of the `#[contractevent]` macro. Left as-is because
-  it still compiles and works; migrating is a good low-complexity issue.
+- **Deprecated event API.** All four contracts now use the `#[contractevent]`
+  macro — the migration from `env.events().publish()` was completed in a
+  prior PR (#9).
 
 ## Building
 
