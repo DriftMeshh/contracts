@@ -400,6 +400,24 @@ mod test {
     }
 
     #[test]
+    fn zero_epoch_seconds_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(&env, &registry_id);
+        let admin = Address::generate(&env);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(SubmissionValidator, ());
+        let validator_client = SubmissionValidatorClient::new(&env, &validator_id);
+
+        // epoch_seconds=0 should be rejected.
+        let result = validator_client.try_initialize(&admin, &registry_id, &2000, &0_u64, &0);
+        assert_eq!(result, Err(Ok(Error::InvalidEpochSeconds)));
+    }
+
+    #[test]
     fn accepts_plausible_readings_and_counts_them() {
         let env = Env::default();
         env.mock_all_auths();
