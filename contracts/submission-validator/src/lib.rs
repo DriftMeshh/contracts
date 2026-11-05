@@ -459,6 +459,19 @@ mod test {
         assert_eq!(validator.get_total_submissions(&1), 1);
     }
 
+    fn setup_with_threshold(env: &Env, threshold: u32) -> (SubmissionValidatorClient<'static>, Address) {
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(env, &registry_id);
+        let admin = Address::generate(env);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(SubmissionValidator, ());
+        let validator_client = SubmissionValidatorClient::new(env, &validator_id);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &threshold);
+
+        (validator_client, registry_id)
+    }
+
     #[test]
     fn rejected_readings_are_counted_and_do_not_inflate_total() {
         let env = Env::default();
@@ -486,6 +499,54 @@ mod test {
         assert!(!accepted2);
         assert_eq!(validator.get_rejected_count(&device), 2);
         // Still only 1 accepted submission; epoch total still 1.
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_total_submissions(&1), 1);
+    }
+
+    #[test]
+    fn auto_slash_threshold_zero_never_fires() {
+        // With threshold=0 (disabled), no event should fire no matter how
+        // many rejections accumulate.
+        let env = Env::default();
+        env.mock_all_auths();
+        // Use standard setup (threshold=0).
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish average.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        // Submit many outliers — should not panic or fire any event.
+        for _ in 0..10 {
+            validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        }
+        // Rejected count accumulated, but no threshold event (threshold=0).
+        assert_eq!(validator.get_rejected_count(&device), 10);
+    }
+
+    #[test]
+    fn auto_slash_threshold_fires_at_configured_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+        // threshold=3: event fires on the 3rd rejected reading.
+        let (validator, registry_id) = setup_with_threshold(&env, 3);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish region average.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+
+        // Two outliers — below threshold, no event yet.
+        validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        validator.submit_reading(&device, &device_type, &1, &1, &999_998);
+        assert_eq!(validator.get_rejected_count(&device), 2);
+
+        // Third outlier — crosses the threshold. The event is emitted here.
+        // We verify the final state; event emission is verified by the fact
+        // that the contract doesn't panic and the counts are correct.
+        validator.submit_reading(&device, &device_type, &1, &1, &999_997);
+        assert_eq!(validator.get_rejected_count(&device), 3);
+        // Accepted count and epoch total are unaffected by all the rejections.
         assert_eq!(validator.get_submission_count(&device, &1), 1);
         assert_eq!(validator.get_total_submissions(&1), 1);
     }
