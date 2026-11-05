@@ -458,4 +458,35 @@ mod test {
         assert_eq!(result, Err(Ok(Error::EpochClosed)));
         assert_eq!(validator.get_total_submissions(&1), 1);
     }
+
+    #[test]
+    fn rejected_readings_are_counted_and_do_not_inflate_total() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish a region average with one good reading.
+        assert!(validator.submit_reading(&device, &device_type, &1, &1, &2500));
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_rejected_count(&device), 0);
+
+        // A wildly out-of-range reading is rejected.
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        assert!(!accepted);
+
+        // Rejected count incremented; accepted count and epoch total unchanged.
+        assert_eq!(validator.get_rejected_count(&device), 1);
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_total_submissions(&1), 1);
+
+        // A second outlier reading increments the rejected count again.
+        let accepted2 = validator.submit_reading(&device, &device_type, &1, &1, &999_998);
+        assert!(!accepted2);
+        assert_eq!(validator.get_rejected_count(&device), 2);
+        // Still only 1 accepted submission; epoch total still 1.
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_total_submissions(&1), 1);
+    }
 }
