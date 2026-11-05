@@ -450,4 +450,32 @@ mod test {
         // Device is still active while the dispute is pending.
         assert!(client.is_active(&device));
     }
+
+    #[test]
+    fn duplicate_dispute_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0x1111_u64);
+
+        // A second dispute while the first is still open must be rejected.
+        let result = client.try_raise_dispute(&disputer, &device, &0x2222_u64);
+        assert_eq!(result, Err(Ok(Error::DisputeAlreadyOpen)));
+
+        // Counts must be unchanged.
+        let (open, upheld) = client.get_dispute_counts(&device);
+        assert_eq!(open, 1);
+        assert_eq!(upheld, 0);
+    }
 }
