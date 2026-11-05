@@ -29,6 +29,15 @@
 //! change. The contract never custodies funds through a separate "fund"
 //! call — `subscription-market` pays straight into this contract's own
 //! token balance, so the pool is simply whatever balance is here.
+//!
+//! ## Admin pause/unpause
+//!
+//! The admin can call `pause()` to block all `claim` operations temporarily.
+//! This is useful during an emergency (e.g. a suspected pool drain exploit)
+//! or while a high-value dispute is under investigation. `unpause()` restores
+//! normal operation. Both are idempotent. `is_paused()` is a cheap read-only
+//! view for monitoring scripts and the frontend.
+//! A paused contract returns `Error::ContractPaused` from `claim`.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
