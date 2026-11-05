@@ -422,6 +422,21 @@ mod test {
     }
 
     #[test]
+    fn has_claimed_reflects_claim_state() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id, streamer, streamer_id, token_admin, _token) = wire(&env);
+        let device = register_device(&env, &validator, &registry_id, 1);
+
+        token_admin.mint(&streamer_id, &500);
+        finalize_epoch(&env, &validator);
+
+        assert!(!streamer.has_claimed(&device, &EPOCH));
+        streamer.claim(&device, &EPOCH);
+        assert!(streamer.has_claimed(&device, &EPOCH));
+    }
+
+    #[test]
     fn double_claim_rejected() {
         let env = Env::default();
         env.mock_all_auths();
