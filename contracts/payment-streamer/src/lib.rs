@@ -56,6 +56,9 @@ pub enum DataKey {
     /// epoch are then paid against this fixed pool, so payout is
     /// independent of claim order.
     EpochPoolSnapshot(u32),
+    /// When true the contract is paused: claim() returns EpochNotFinal
+    /// (reusing the existing error type) for any epoch. Set by the admin.
+    Paused,
 }
 
 #[contracterror]
@@ -70,6 +73,9 @@ pub enum Error {
     /// isn't final and payouts can't be computed fairly. Claim again after
     /// the epoch ends.
     EpochNotFinal = 5,
+    /// The contract has been paused by the admin. All claim calls are
+    /// rejected until the admin calls unpause().
+    ContractPaused = 6,
 }
 
 /// Emitted when a device successfully claims its payout for an epoch.
@@ -112,6 +118,12 @@ impl PaymentStreamer {
     /// used only as a defensive cap that never triggers in normal flow.
     pub fn claim(env: Env, device: Address, epoch: u32) -> Result<i128, Error> {
         device.require_auth();
+
+        // Reject all claims when the contract is paused.
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        if paused {
+            return Err(Error::ContractPaused);
+        }
 
         let claimed_key = DataKey::Claimed(device.clone(), epoch);
         if env.storage().temporary().has(&claimed_key) {
@@ -189,6 +201,42 @@ impl PaymentStreamer {
         .publish(&env);
 
         Ok(payout)
+    }
+
+    /// Admin pauses all claim operations. Useful during an emergency or
+    /// while a dispute is being investigated. Idempotent: calling pause
+    /// when already paused has no effect.
+    pub fn pause(env: Env, admin_caller: Address) -> Result<(), Error> {
+        admin_caller.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin_caller != stored_admin {
+            return Err(Error::NotInitialized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Ok(())
+    }
+
+    /// Admin unpauses the contract, re-enabling claims. Idempotent.
+    pub fn unpause(env: Env, admin_caller: Address) -> Result<(), Error> {
+        admin_caller.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin_caller != stored_admin {
+            return Err(Error::NotInitialized);
+        }
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
 
     /// How much reward token this contract currently holds — i.e. what's
