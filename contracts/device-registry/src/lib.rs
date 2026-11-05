@@ -423,4 +423,31 @@ mod test {
         let result = client.try_register_device(&device, &owner, &device_type, &0, &0);
         assert_eq!(result, Err(Ok(Error::DeviceAlreadyRegistered)));
     }
+
+    #[test]
+    fn raise_dispute_increments_open_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let device_type = Symbol::new(&env, "weather");
+        client.register_device(&device, &owner, &device_type, &0, &0);
+
+        let disputer = Address::generate(&env);
+        let open = client.raise_dispute(&disputer, &device, &0xdeadbeef_u64);
+        assert_eq!(open, 1);
+
+        let (open_count, upheld_count) = client.get_dispute_counts(&device);
+        assert_eq!(open_count, 1);
+        assert_eq!(upheld_count, 0);
+        // Device is still active while the dispute is pending.
+        assert!(client.is_active(&device));
+    }
 }
