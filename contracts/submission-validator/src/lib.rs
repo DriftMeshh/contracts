@@ -54,6 +54,21 @@ pub enum DataKey {
     EpochSeconds,
     /// Ledger timestamp at which epoch 0 started (set at `initialize`).
     EpochZero,
+    /// Cumulative count of readings that failed the outlier check for a
+    /// specific device (lifetime, across all epochs). Used as on-chain
+    /// evidence when raising a dispute — a high rejected:accepted ratio
+    /// signals systematic bad data. Stored in temporary storage so it
+    /// naturally expires after the TTL window, preventing stale data from
+    /// forever haunting a device that corrected its behaviour.
+    RejectedCount(Address),
+    /// Threshold of consecutive rejected readings that triggers automatic
+    /// dispute evidence generation. Set at initialize time via
+    /// `auto_slash_threshold` (0 = disabled). When a device's lifetime
+    /// rejected count crosses this threshold, \`submit_reading\` emits an
+    /// \`AutoSlashThresholdReached\` event so the admin / off-chain monitor
+    /// can take action — the contract does NOT automatically deactivate
+    /// (that stays in device-registry) to preserve separation of concerns.
+    AutoSlashThreshold,
 }
 
 #[contracterror]
