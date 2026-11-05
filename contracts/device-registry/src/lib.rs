@@ -66,6 +66,32 @@ pub struct DeviceDeactivated {
     pub reason: Symbol,
 }
 
+/// Emitted when a new dispute is raised against a device.
+/// Topics: ["dispute_raised", device_address]
+/// Data: (disputer, evidence_hash, open_dispute_count)
+#[contractevent]
+#[derive(Clone)]
+pub struct DisputeRaised {
+    #[topic]
+    pub device: Address,
+    pub disputer: Address,
+    pub evidence_hash: u64,
+    pub open_dispute_count: u32,
+}
+
+/// Emitted when the admin resolves a dispute.
+/// Topics: ["dispute_resolved", device_address]
+/// Data: (upheld, upheld_total, device_active)
+#[contractevent]
+#[derive(Clone)]
+pub struct DisputeResolved {
+    #[topic]
+    pub device: Address,
+    pub upheld: bool,
+    pub upheld_total: u32,
+    pub device_active: bool,
+}
+
 #[contract]
 pub struct DeviceRegistry;
 
