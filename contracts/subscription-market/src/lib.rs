@@ -26,6 +26,9 @@ pub enum Error {
     NotInitialized = 1,
     AlreadyInitialized = 2,
     InvalidPeriods = 3,
+    /// set_price was called with price <= 0. A zero-or-negative price would
+    /// let subscribers fund nothing into the pool, breaking the economic loop.
+    InvalidPrice = 4,
 }
 
 /// Emitted when a subscriber purchases or extends their subscription.
@@ -152,6 +155,9 @@ impl SubscriptionMarket {
         let stored_admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
         if stored_admin.as_ref() != Some(&admin) {
             return Err(Error::NotInitialized);
+        }
+        if price <= 0 {
+            return Err(Error::InvalidPrice);
         }
         let old_price: i128 = env
             .storage()
