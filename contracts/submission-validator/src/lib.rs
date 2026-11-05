@@ -301,6 +301,15 @@ impl SubmissionValidator {
             .unwrap_or(0)
     }
 
+    /// Returns the auto_slash_threshold configured at initialize time.
+    /// Returns 0 if not set (threshold disabled).
+    pub fn get_auto_slash_threshold(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::AutoSlashThreshold)
+            .unwrap_or(0)
+    }
+
     /// Total accepted readings across *all* devices in an epoch. Frozen
     /// once the epoch is final (no readings accepted after the window
     /// closes), so this is the stable denominator for proportional payouts.
