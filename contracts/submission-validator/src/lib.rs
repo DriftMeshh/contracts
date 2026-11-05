@@ -81,6 +81,9 @@ pub enum Error {
     /// The epoch's time window has already closed — its total submission
     /// count is final, so late readings can't be allowed to change it.
     EpochClosed = 4,
+    /// epoch_seconds was passed as 0 to initialize(), which would make every
+    /// epoch immediately final (epoch_end = epoch_zero + 0 = epoch_zero).
+    InvalidEpochSeconds = 5,
 }
 
 /// Emitted when a reading is submitted (accepted or rejected by outlier check).
@@ -158,6 +161,9 @@ impl SubmissionValidator {
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
+        }
+        if epoch_seconds == 0 {
+            return Err(Error::InvalidEpochSeconds);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
