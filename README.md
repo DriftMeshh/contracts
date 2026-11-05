@@ -96,17 +96,17 @@ stellar contract build        # produces target/wasm32v1-none/release/*.wasm
 Scoped so each is a separable GitHub issue at a realistic complexity tier:
 
 **Trivial (100 pts)**
-- Migrate `env.events().publish` calls to the `#[contractevent]` macro in each contract
-- Add `pool_balance`-style view helpers to `subscription-market` (e.g. `get_price`)
-- Add doc comments / a CONTRIBUTING.md
+- ~~Migrate `env.events().publish` calls to the `#[contractevent]` macro in each contract~~ ✅ Done (PR #9)
+- ~~Add `pool_balance`-style view helpers to `subscription-market` (e.g. `get_price`)~~ ✅ Done (this PR)
+- ~~Add doc comments / a CONTRIBUTING.md~~ ✅ Done
 
 **Medium (150 pts)**
-- Add explicit `extend_ttl` / archival handling for `device-registry`'s persistent entries so long-lived devices don't get archived
+- ~~Add explicit `extend_ttl` / archival handling for `device-registry`'s persistent entries so long-lived devices don't get archived~~ ✅ Done (this PR — device-registry + subscription-market)
 - Add a `batch_submit_reading` entrypoint so a device can submit several readings in one call
-- Add an admin `pause`/`unpause` switch to `payment-streamer`
+- ~~Add an admin `pause`/`unpause` switch to `payment-streamer`~~ ✅ Done (this PR)
 - Add geohash-bucket helper utilities to `device-sdk` so `region_code` computation is consistent across clients
 
 **High (200 pts)**
 - Design and implement stake-weighted outlier scoring (replace the simple rolling-average check in `submission-validator` with something resistant to a device slowly dragging its own region average)
-- Implement partial/dispute-based slashing for devices caught submitting bad data
+- ~~Implement partial/dispute-based slashing for devices caught submitting bad data~~ ✅ Done (this PR — raise_dispute + resolve_dispute + RejectedCount + AutoSlashThresholdReached)
 - Deploy all four contracts to Stellar testnet and extend `tests-e2e`'s flow into a real integration test against a live network (today it only runs in Soroban's in-process test environment)
