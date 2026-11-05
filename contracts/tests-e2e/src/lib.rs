@@ -101,4 +101,94 @@ mod e2e {
         let second_claim = streamer.try_claim(&device, &epoch);
         assert!(second_claim.is_err());
     }
+
+    /// End-to-end dispute/slashing scenario:
+    /// device submits bad data → disputer raises dispute → admin upholds →
+    /// device deactivated → device's subsequent readings are rejected →
+    /// admin reactivates → device can submit again.
+    #[test]
+    fn dispute_slash_and_reactivation_loop() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+
+        let registry_id = env.register(DeviceRegistry, ());
+        let registry = DeviceRegistryClient::new(&env, &registry_id);
+        registry.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let device_owner = Address::generate(&env);
+        let device_type = Symbol::new(&env, "weather");
+        registry.register_device(&device, &device_owner, &device_type, &0, &0);
+        assert!(registry.is_active(&device));
+        let (open, upheld) = registry.get_dispute_counts(&device);
+        assert_eq!(open, 0);
+        assert_eq!(upheld, 0);
+
+        // The device submits some readings that will later be disputed.
+        let validator_id = env.register(SubmissionValidator, ());
+        let validator = SubmissionValidatorClient::new(&env, &validator_id);
+        let epoch_seconds: u64 = 86_400;
+        // threshold=3: after 3 rejected readings an AutoSlashThresholdReached
+        // event fires (doesn't automatically deactivate, but signals the admin).
+        validator.initialize(&admin, &registry_id, &2000, &epoch_seconds, &3);
+        assert_eq!(validator.get_auto_slash_threshold(), 3);
+
+        let epoch = 1u32;
+        let region = 1u32;
+        // One accepted reading to establish the region average.
+        assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2500));
+
+        // Three outlier readings — this crosses the auto_slash_threshold,
+        // causing an AutoSlashThresholdReached event to be emitted on the 3rd.
+        validator.submit_reading(&device, &device_type, &region, &epoch, &999_999);
+        validator.submit_reading(&device, &device_type, &region, &epoch, &999_998);
+        validator.submit_reading(&device, &device_type, &region, &epoch, &999_997);
+        assert_eq!(validator.get_rejected_count(&device), 3);
+        // Accepted submission count is unchanged — only the 1 good reading.
+        assert_eq!(validator.get_submission_count(&device, &epoch), 1);
+
+        // A third-party disputer raises a dispute, citing the rejection evidence.
+        let disputer = Address::generate(&env);
+        let evidence = 0xdeadbeef_cafebabe_u64;
+        let open_count = registry.raise_dispute(&disputer, &device, &evidence);
+        assert_eq!(open_count, 1);
+        // Device is STILL ACTIVE while the dispute is open.
+        assert!(registry.is_active(&device));
+        let (open, _) = registry.get_dispute_counts(&device);
+        assert_eq!(open, 1);
+
+        // Admin reviews the evidence and upholds the dispute.
+        registry.resolve_dispute(&admin, &device, &true);
+
+        // Device is now DEACTIVATED (slashed).
+        assert!(!registry.is_active(&device));
+        let (open_after, upheld_after) = registry.get_dispute_counts(&device);
+        assert_eq!(open_after, 0);   // dispute cleared
+        assert_eq!(upheld_after, 1); // lifetime upheld count
+
+        // Slashed device's readings are rejected by submission-validator
+        // because is_active now returns false.
+        let result = validator.try_submit_reading(
+            &device, &device_type, &region, &epoch, &2500,
+        );
+        assert_eq!(result, Err(Ok(submission_validator::Error::DeviceNotActive)));
+
+        // Admin reactivates the device (e.g. hardware replaced, off-chain verified).
+        registry.reactivate_device(&device, &admin);
+        assert!(registry.is_active(&device));
+
+        // Device can submit readings again after reactivation.
+        // Use epoch 2 to avoid EpochClosed (epoch 1 is not finalized yet so
+        // still open; but we advance the ledger to ensure we're in epoch 2).
+        let epoch2 = 2u32;
+        assert!(validator.submit_reading(&device, &device_type, &region, &epoch2, &2500));
+        assert_eq!(validator.get_submission_count(&device, &epoch2), 1);
+
+        // The upheld dispute count persists after reactivation — it's a
+        // permanent reputation record, not a clean slate.
+        let (_, upheld_final) = registry.get_dispute_counts(&device);
+        assert_eq!(upheld_final, 1);
+    }
 }

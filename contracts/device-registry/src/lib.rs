@@ -258,8 +258,6 @@ impl DeviceRegistry {
         // Clear the open dispute.
         env.storage().instance().set(&open_key, &0u32);
 
-        let device_active: bool;
-
         if upheld {
             // Update the lifetime upheld counter.
             let upheld_key = DataKey::UpheldDisputeCount(device.clone());
@@ -273,7 +271,6 @@ impl DeviceRegistry {
                 record.active = false;
                 env.storage().persistent().set(&dev_key, &record);
             }
-            device_active = false;
 
             DeviceDeactivated {
                 device: device.clone(),
@@ -297,7 +294,7 @@ impl DeviceRegistry {
                 .unwrap_or(0);
 
             let dev_key = DataKey::Device(device.clone());
-            device_active = env
+            let device_active = env
                 .storage()
                 .persistent()
                 .get::<DataKey, Device>(&dev_key)
