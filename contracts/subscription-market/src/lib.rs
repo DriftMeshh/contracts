@@ -40,6 +40,16 @@ pub struct Subscribe {
     pub new_expiry: u64,
 }
 
+/// Emitted when the admin updates the subscription price.
+/// Topics: ["price_updated"]
+/// Data: (old_price, new_price)
+#[contractevent]
+#[derive(Clone)]
+pub struct PriceUpdated {
+    pub old_price: i128,
+    pub new_price: i128,
+}
+
 #[contract]
 pub struct SubscriptionMarket;
 
@@ -138,7 +148,13 @@ impl SubscriptionMarket {
         if stored_admin.as_ref() != Some(&admin) {
             return Err(Error::NotInitialized);
         }
+        let old_price: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PricePerPeriod)
+            .unwrap_or(0);
         env.storage().instance().set(&DataKey::PricePerPeriod, &price);
+        PriceUpdated { old_price, new_price: price }.publish(&env);
         Ok(())
     }
 
