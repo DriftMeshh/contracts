@@ -186,6 +186,47 @@ impl DeviceRegistry {
         Ok(())
     }
 
+    /// Any address may raise a dispute against a registered device by supplying
+    /// a 64-bit hash of off-chain evidence (e.g. truncated SHA-256 of a URL +
+    /// device + epoch). At most one open dispute is allowed per device at a
+    /// time to prevent griefing through dispute flooding — a disputer must
+    /// wait for the admin to resolve the current dispute before raising another.
+    /// The disputer's address is recorded on-chain (in the event) creating
+    /// accountability for false disputes.
+    pub fn raise_dispute(
+        env: Env,
+        disputer: Address,
+        device: Address,
+        evidence_hash: u64,
+    ) -> Result<u32, Error> {
+        disputer.require_auth();
+
+        // Verify the device exists.
+        if !env.storage().persistent().has(&DataKey::Device(device.clone())) {
+            return Err(Error::DeviceNotFound);
+        }
+
+        // Enforce one-open-dispute-at-a-time to prevent griefing.
+        let open_key = DataKey::OpenDisputeCount(device.clone());
+        let open: u32 = env.storage().instance().get(&open_key).unwrap_or(0);
+        if open > 0 {
+            return Err(Error::DisputeAlreadyOpen);
+        }
+
+        let new_open = open + 1;
+        env.storage().instance().set(&open_key, &new_open);
+
+        DisputeRaised {
+            device,
+            disputer,
+            evidence_hash,
+            open_dispute_count: new_open,
+        }
+        .publish(&env);
+
+        Ok(new_open)
+    }
+
     /// The registry admin can re-enable a previously deactivated device —
     /// for example, after a dispute has been resolved in the device's favour,
     /// or after a hardware replacement has been verified off-chain.
