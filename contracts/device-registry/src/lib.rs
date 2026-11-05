@@ -24,6 +24,13 @@ pub struct Device {
 pub enum DataKey {
     Admin,
     Device(Address),
+    /// Number of open (unresolved) disputes raised against this device.
+    /// Incremented by \`raise_dispute\`, decremented (or reset) by
+    /// \`resolve_dispute\`. Stored in instance storage so it's cheap to read.
+    OpenDisputeCount(Address),
+    /// Cumulative count of disputes upheld against this device across its
+    /// lifetime. Never decremented — used for reputation tracking.
+    UpheldDisputeCount(Address),
 }
 
 #[contracterror]
