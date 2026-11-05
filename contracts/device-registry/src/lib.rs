@@ -48,6 +48,17 @@ pub struct RegDev {
     pub device_type: Symbol,
 }
 
+/// Emitted when a device is deactivated (by owner, admin, or dispute resolution).
+/// Topics: ["deactivated", device_address]
+/// Data: reason
+#[contractevent]
+#[derive(Clone)]
+pub struct DeviceDeactivated {
+    #[topic]
+    pub device: Address,
+    pub reason: Symbol,
+}
+
 #[contract]
 pub struct DeviceRegistry;
 
