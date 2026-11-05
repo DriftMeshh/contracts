@@ -533,4 +533,51 @@ mod test {
         assert_eq!(open, 0);   // cleared even on dismissal
         assert_eq!(upheld, 0); // upheld count not incremented on dismissal
     }
+
+    #[test]
+    fn resolve_with_no_open_dispute_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        // No dispute has been raised — resolving should fail.
+        let result = client.try_resolve_dispute(&admin, &device, &true);
+        assert_eq!(result, Err(Ok(Error::NoOpenDispute)));
+    }
+
+    #[test]
+    fn new_dispute_can_be_raised_after_resolution() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0x1111_u64);
+        // Dismiss the first dispute.
+        client.resolve_dispute(&admin, &device, &false);
+
+        // A new dispute can now be raised (open count was reset to 0).
+        let open = client.raise_dispute(&disputer, &device, &0x2222_u64);
+        assert_eq!(open, 1);
+        let (open_count, _) = client.get_dispute_counts(&device);
+        assert_eq!(open_count, 1);
+    }
 }
