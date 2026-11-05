@@ -409,6 +409,32 @@ mod test {
     }
 
     #[test]
+    fn get_region_average_tracks_accepted_readings_only() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // No readings yet — average should be 0.
+        assert_eq!(validator.get_region_average(&1, &device_type), 0);
+
+        // Submit two accepted readings.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        validator.submit_reading(&device, &device_type, &1, &1, &2600);
+        // Average = (2500 + 2600) / 2 = 2550.
+        assert_eq!(validator.get_region_average(&1, &device_type), 2550);
+
+        // A rejected reading must NOT update the region average — if it did,
+        // a device could slowly drag the average up by submitting increasingly
+        // large outliers just under the rejection threshold.
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        assert!(!accepted);
+        // Average is unchanged.
+        assert_eq!(validator.get_region_average(&1, &device_type), 2550);
+    }
+
+    #[test]
     fn zero_epoch_seconds_rejected() {
         let env = Env::default();
         env.mock_all_auths();
