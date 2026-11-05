@@ -26,6 +26,9 @@ pub enum Error {
     NotInitialized = 1,
     AlreadyInitialized = 2,
     InvalidPeriods = 3,
+    /// set_price was called with price <= 0. A zero-or-negative price would
+    /// let subscribers fund nothing into the pool, breaking the economic loop.
+    InvalidPrice = 4,
 }
 
 /// Emitted when a subscriber purchases or extends their subscription.
@@ -38,6 +41,16 @@ pub struct Subscribe {
     pub subscriber: Address,
     pub periods: u32,
     pub new_expiry: u64,
+}
+
+/// Emitted when the admin updates the subscription price.
+/// Topics: ["price_updated"]
+/// Data: (old_price, new_price)
+#[contractevent]
+#[derive(Clone)]
+pub struct PriceUpdated {
+    pub old_price: i128,
+    pub new_price: i128,
 }
 
 #[contract]
@@ -106,6 +119,11 @@ impl SubscriptionMarket {
         let new_expiry = base + period_seconds * periods as u64;
 
         env.storage().persistent().set(&expiry_key, &new_expiry);
+        // Extend the TTL so an active subscriber's expiry record is never
+        // archived before the subscription itself expires. We use ~1 year of
+        // ledger slots (6_307_200) as the target, which comfortably covers
+        // the maximum sensible subscription length.
+        env.storage().persistent().extend_ttl(&expiry_key, 6_307_200, 6_307_200);
         Subscribe {
             subscriber,
             periods,
@@ -138,8 +156,26 @@ impl SubscriptionMarket {
         if stored_admin.as_ref() != Some(&admin) {
             return Err(Error::NotInitialized);
         }
+        if price <= 0 {
+            return Err(Error::InvalidPrice);
+        }
+        let old_price: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PricePerPeriod)
+            .unwrap_or(0);
         env.storage().instance().set(&DataKey::PricePerPeriod, &price);
+        PriceUpdated { old_price, new_price: price }.publish(&env);
         Ok(())
+    }
+
+    /// Returns the current price per subscription period.
+    /// Returns 0 if the contract has not been initialized.
+    pub fn get_price(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::PricePerPeriod)
+            .unwrap_or(0)
     }
 }
 
@@ -225,5 +261,15 @@ mod test {
 
         let result = market.try_subscribe(&subscriber, &0);
         assert_eq!(result, Err(Ok(Error::InvalidPeriods)));
+    }
+
+    #[test]
+    fn get_price_returns_current_price() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, _subscriber, _token_client, _reward_pool) = setup(&env);
+
+        // setup() initializes with PRICE=200.
+        assert_eq!(market.get_price(), PRICE);
     }
 }

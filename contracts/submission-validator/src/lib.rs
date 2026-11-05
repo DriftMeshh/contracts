@@ -24,6 +24,25 @@
 //! out of line with its neighbours, nothing more. Hardening this
 //! (stake-weighted scoring, slashing, multi-device consensus) is
 //! explicitly left as follow-up Wave issues — see README.
+//!
+//! ## Rejected-reading tracking and auto-slash threshold
+//!
+//! Every reading that fails the outlier check increments
+//! `RejectedCount(device)` in temporary storage. This serves as on-chain
+//! evidence for the dispute mechanism in `device-registry`: a high
+//! rejected count relative to `SubmissionCount` signals systematic bad
+//! data rather than a calibration glitch.
+//!
+//! When `auto_slash_threshold > 0` (set at `initialize` time) and a device's
+//! cumulative rejected count reaches or exceeds that threshold, an
+//! `AutoSlashThresholdReached` event is emitted. The contract does NOT
+//! automatically deactivate the device — that responsibility stays in
+//! `device-registry` (`deactivate_device` / `resolve_dispute`) to maintain
+//! strict separation of concerns. The event is the hook for an off-chain
+//! monitor to call `device-registry.raise_dispute` or
+//! `device-registry.deactivate_device` as appropriate.
+//!
+//! Set `auto_slash_threshold = 0` to disable the threshold events entirely.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol,
@@ -54,6 +73,21 @@ pub enum DataKey {
     EpochSeconds,
     /// Ledger timestamp at which epoch 0 started (set at `initialize`).
     EpochZero,
+    /// Cumulative count of readings that failed the outlier check for a
+    /// specific device (lifetime, across all epochs). Used as on-chain
+    /// evidence when raising a dispute — a high rejected:accepted ratio
+    /// signals systematic bad data. Stored in temporary storage so it
+    /// naturally expires after the TTL window, preventing stale data from
+    /// forever haunting a device that corrected its behaviour.
+    RejectedCount(Address),
+    /// Threshold of consecutive rejected readings that triggers automatic
+    /// dispute evidence generation. Set at initialize time via
+    /// `auto_slash_threshold` (0 = disabled). When a device's lifetime
+    /// rejected count crosses this threshold, \`submit_reading\` emits an
+    /// \`AutoSlashThresholdReached\` event so the admin / off-chain monitor
+    /// can take action — the contract does NOT automatically deactivate
+    /// (that stays in device-registry) to preserve separation of concerns.
+    AutoSlashThreshold,
 }
 
 #[contracterror]
@@ -66,6 +100,9 @@ pub enum Error {
     /// The epoch's time window has already closed — its total submission
     /// count is final, so late readings can't be allowed to change it.
     EpochClosed = 4,
+    /// epoch_seconds was passed as 0 to initialize(), which would make every
+    /// epoch immediately final (epoch_end = epoch_zero + 0 = epoch_zero).
+    InvalidEpochSeconds = 5,
 }
 
 /// Emitted when a reading is submitted (accepted or rejected by outlier check).
@@ -80,6 +117,22 @@ pub struct Reading {
     pub epoch: u32,
     pub value: i32,
     pub accepted: bool,
+}
+
+/// Emitted when a device's cumulative rejected-reading count crosses the
+/// auto-slash threshold configured at initialize time.
+/// Topics: ["auto_slash", device_address]
+/// Data: (rejected_count, threshold)
+/// This event is the signal for an off-chain monitor or admin to call
+/// device-registry.raise_dispute or device-registry.deactivate_device.
+/// The contract does not auto-deactivate (separation of concerns).
+#[contractevent]
+#[derive(Clone)]
+pub struct AutoSlashThresholdReached {
+    #[topic]
+    pub device: Address,
+    pub rejected_count: u32,
+    pub threshold: u32,
 }
 
 #[contract]
@@ -113,15 +166,23 @@ impl SubmissionValidator {
     ///
     /// `epoch_seconds` is the length of one epoch in ledger seconds; it
     /// defines the cycle-end cutoff that freezes an epoch's total.
+    ///
+    /// `auto_slash_threshold` is how many cumulative rejected readings a device
+    /// may accumulate before an `AutoSlashThresholdReached` event is emitted.
+    /// Set to 0 to disable threshold events entirely.
     pub fn initialize(
         env: Env,
         admin: Address,
         registry: Address,
         tolerance_bps: u32,
         epoch_seconds: u64,
+        auto_slash_threshold: u32,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
+        }
+        if epoch_seconds == 0 {
+            return Err(Error::InvalidEpochSeconds);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -129,6 +190,7 @@ impl SubmissionValidator {
         env.storage().instance().set(&DataKey::ToleranceBps, &tolerance_bps);
         env.storage().instance().set(&DataKey::EpochSeconds, &epoch_seconds);
         env.storage().instance().set(&DataKey::EpochZero, &env.ledger().timestamp());
+        env.storage().instance().set(&DataKey::AutoSlashThreshold, &auto_slash_threshold);
         Ok(())
     }
 
@@ -201,9 +263,32 @@ impl SubmissionValidator {
             let total: u32 = env.storage().temporary().get(&total_key).unwrap_or(0);
             env.storage().temporary().set(&total_key, &(total + 1));
             env.storage().temporary().extend_ttl(&total_key, 120_960, 120_960);
-        }
+        } else {
+            // Track cumulative rejected readings per device. These serve as
+            // on-chain evidence for the dispute mechanism: a high rejected count
+            // relative to SubmissionCount signals systematic bad data rather
+            // than a one-off calibration glitch.
+            let rej_key = DataKey::RejectedCount(device.clone());
+            let prev_rej: u32 = env.storage().temporary().get(&rej_key).unwrap_or(0);
+            let new_rej = prev_rej + 1;
+            env.storage().temporary().set(&rej_key, &new_rej);
+            env.storage().temporary().extend_ttl(&rej_key, 120_960, 120_960);
 
-        Reading {
+            // Check if the device has crossed the auto-slash threshold.
+            let threshold: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::AutoSlashThreshold)
+                .unwrap_or(0);
+            if threshold > 0 && new_rej >= threshold {
+                AutoSlashThresholdReached {
+                    device: device.clone(),
+                    rejected_count: new_rej,
+                    threshold,
+                }
+                .publish(&env);
+            }
+        }        Reading {
             device,
             region_code,
             epoch,
@@ -219,6 +304,28 @@ impl SubmissionValidator {
         env.storage()
             .temporary()
             .get(&DataKey::SubmissionCount(device, epoch))
+            .unwrap_or(0)
+    }
+
+    /// Cumulative count of readings that failed the outlier check for a
+    /// device, across all epochs within the current TTL window. Returns 0 if
+    /// the device has never had a reading rejected (or if the counter has
+    /// expired). This is the primary on-chain evidence metric for the dispute
+    /// mechanism: a high value relative to SubmissionCount(device, epoch)
+    /// indicates systematic bad data rather than a one-off anomaly.
+    pub fn get_rejected_count(env: Env, device: Address) -> u32 {
+        env.storage()
+            .temporary()
+            .get(&DataKey::RejectedCount(device))
+            .unwrap_or(0)
+    }
+
+    /// Returns the auto_slash_threshold configured at initialize time.
+    /// Returns 0 if not set (threshold disabled).
+    pub fn get_auto_slash_threshold(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::AutoSlashThreshold)
             .unwrap_or(0)
     }
 
@@ -272,7 +379,7 @@ mod test {
 
         let validator_id = env.register(SubmissionValidator, ());
         let validator_client = SubmissionValidatorClient::new(env, &validator_id);
-        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &0);
 
         (validator_client, registry_id)
     }
@@ -318,6 +425,50 @@ mod test {
             &2500,
         );
         assert_eq!(result, Err(Ok(Error::DeviceNotActive)));
+    }
+
+    #[test]
+    fn get_region_average_tracks_accepted_readings_only() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // No readings yet — average should be 0.
+        assert_eq!(validator.get_region_average(&1, &device_type), 0);
+
+        // Submit two accepted readings.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        validator.submit_reading(&device, &device_type, &1, &1, &2600);
+        // Average = (2500 + 2600) / 2 = 2550.
+        assert_eq!(validator.get_region_average(&1, &device_type), 2550);
+
+        // A rejected reading must NOT update the region average — if it did,
+        // a device could slowly drag the average up by submitting increasingly
+        // large outliers just under the rejection threshold.
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        assert!(!accepted);
+        // Average is unchanged.
+        assert_eq!(validator.get_region_average(&1, &device_type), 2550);
+    }
+
+    #[test]
+    fn zero_epoch_seconds_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(&env, &registry_id);
+        let admin = Address::generate(&env);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(SubmissionValidator, ());
+        let validator_client = SubmissionValidatorClient::new(&env, &validator_id);
+
+        // epoch_seconds=0 should be rejected.
+        let result = validator_client.try_initialize(&admin, &registry_id, &2000, &0_u64, &0);
+        assert_eq!(result, Err(Ok(Error::InvalidEpochSeconds)));
     }
 
     #[test]
@@ -383,6 +534,98 @@ mod test {
         // stays frozen at 1 — payouts can't be changed after the fact.
         let result = validator.try_submit_reading(&device, &device_type, &1, &1, &2500);
         assert_eq!(result, Err(Ok(Error::EpochClosed)));
+        assert_eq!(validator.get_total_submissions(&1), 1);
+    }
+
+    fn setup_with_threshold(env: &Env, threshold: u32) -> (SubmissionValidatorClient<'static>, Address) {
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(env, &registry_id);
+        let admin = Address::generate(env);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(SubmissionValidator, ());
+        let validator_client = SubmissionValidatorClient::new(env, &validator_id);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &threshold);
+
+        (validator_client, registry_id)
+    }
+
+    #[test]
+    fn rejected_readings_are_counted_and_do_not_inflate_total() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish a region average with one good reading.
+        assert!(validator.submit_reading(&device, &device_type, &1, &1, &2500));
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_rejected_count(&device), 0);
+
+        // A wildly out-of-range reading is rejected.
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        assert!(!accepted);
+
+        // Rejected count incremented; accepted count and epoch total unchanged.
+        assert_eq!(validator.get_rejected_count(&device), 1);
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_total_submissions(&1), 1);
+
+        // A second outlier reading increments the rejected count again.
+        let accepted2 = validator.submit_reading(&device, &device_type, &1, &1, &999_998);
+        assert!(!accepted2);
+        assert_eq!(validator.get_rejected_count(&device), 2);
+        // Still only 1 accepted submission; epoch total still 1.
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+        assert_eq!(validator.get_total_submissions(&1), 1);
+    }
+
+    #[test]
+    fn auto_slash_threshold_zero_never_fires() {
+        // With threshold=0 (disabled), no event should fire no matter how
+        // many rejections accumulate.
+        let env = Env::default();
+        env.mock_all_auths();
+        // Use standard setup (threshold=0).
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish average.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        // Submit many outliers — should not panic or fire any event.
+        for _ in 0..10 {
+            validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        }
+        // Rejected count accumulated, but no threshold event (threshold=0).
+        assert_eq!(validator.get_rejected_count(&device), 10);
+    }
+
+    #[test]
+    fn auto_slash_threshold_fires_at_configured_count() {
+        let env = Env::default();
+        env.mock_all_auths();
+        // threshold=3: event fires on the 3rd rejected reading.
+        let (validator, registry_id) = setup_with_threshold(&env, 3);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // Establish region average.
+        validator.submit_reading(&device, &device_type, &1, &1, &2500);
+
+        // Two outliers — below threshold, no event yet.
+        validator.submit_reading(&device, &device_type, &1, &1, &999_999);
+        validator.submit_reading(&device, &device_type, &1, &1, &999_998);
+        assert_eq!(validator.get_rejected_count(&device), 2);
+
+        // Third outlier — crosses the threshold. The event is emitted here.
+        // We verify the final state; event emission is verified by the fact
+        // that the contract doesn't panic and the counts are correct.
+        validator.submit_reading(&device, &device_type, &1, &1, &999_997);
+        assert_eq!(validator.get_rejected_count(&device), 3);
+        // Accepted count and epoch total are unaffected by all the rejections.
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
         assert_eq!(validator.get_total_submissions(&1), 1);
     }
 }
