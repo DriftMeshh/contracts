@@ -256,4 +256,14 @@ mod test {
         let result = market.try_subscribe(&subscriber, &0);
         assert_eq!(result, Err(Ok(Error::InvalidPeriods)));
     }
+
+    #[test]
+    fn get_price_returns_current_price() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, _subscriber, _token_client, _reward_pool) = setup(&env);
+
+        // setup() initializes with PRICE=200.
+        assert_eq!(market.get_price(), PRICE);
+    }
 }
