@@ -141,6 +141,15 @@ impl SubscriptionMarket {
         env.storage().instance().set(&DataKey::PricePerPeriod, &price);
         Ok(())
     }
+
+    /// Returns the current price per subscription period.
+    /// Returns 0 if the contract has not been initialized.
+    pub fn get_price(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::PricePerPeriod)
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
