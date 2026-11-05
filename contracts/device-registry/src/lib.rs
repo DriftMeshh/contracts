@@ -42,6 +42,12 @@ pub enum Error {
     DeviceAlreadyRegistered = 3,
     DeviceNotFound = 4,
     NotOwnerOrAdmin = 5,
+    /// A new dispute was raised but the device already has one open.
+    /// The existing dispute must be resolved before a new one is accepted.
+    /// This prevents griefing through dispute flooding.
+    DisputeAlreadyOpen = 6,
+    /// Attempted to resolve a dispute but no open dispute exists for the device.
+    NoOpenDispute = 7,
 }
 
 /// Emitted when a device is successfully registered.
