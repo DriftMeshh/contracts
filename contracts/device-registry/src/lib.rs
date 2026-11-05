@@ -141,6 +141,36 @@ impl DeviceRegistry {
         Ok(())
     }
 
+    /// The registry admin can re-enable a previously deactivated device —
+    /// for example, after a dispute has been resolved in the device's favour,
+    /// or after a hardware replacement has been verified off-chain.
+    /// Only the admin can reactivate (not the owner) so that an owner cannot
+    /// unilaterally undo an admin-initiated or dispute-driven deactivation.
+    pub fn reactivate_device(env: Env, device: Address, admin_caller: Address) -> Result<(), Error> {
+        admin_caller.require_auth();
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
+        if admin_caller != stored_admin {
+            return Err(Error::NotOwnerOrAdmin);
+        }
+
+        let key = DataKey::Device(device.clone());
+        let mut record: Device = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::DeviceNotFound)?;
+
+        record.active = true;
+        env.storage().persistent().set(&key, &record);
+        Ok(())
+    }
+
     pub fn get_device(env: Env, device: Address) -> Result<Device, Error> {
         env.storage()
             .persistent()
