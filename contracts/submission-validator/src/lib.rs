@@ -24,6 +24,25 @@
 //! out of line with its neighbours, nothing more. Hardening this
 //! (stake-weighted scoring, slashing, multi-device consensus) is
 //! explicitly left as follow-up Wave issues — see README.
+//!
+//! ## Rejected-reading tracking and auto-slash threshold
+//!
+//! Every reading that fails the outlier check increments
+//! `RejectedCount(device)` in temporary storage. This serves as on-chain
+//! evidence for the dispute mechanism in `device-registry`: a high
+//! rejected count relative to `SubmissionCount` signals systematic bad
+//! data rather than a calibration glitch.
+//!
+//! When `auto_slash_threshold > 0` (set at `initialize` time) and a device's
+//! cumulative rejected count reaches or exceeds that threshold, an
+//! `AutoSlashThresholdReached` event is emitted. The contract does NOT
+//! automatically deactivate the device — that responsibility stays in
+//! `device-registry` (`deactivate_device` / `resolve_dispute`) to maintain
+//! strict separation of concerns. The event is the hook for an off-chain
+//! monitor to call `device-registry.raise_dispute` or
+//! `device-registry.deactivate_device` as appropriate.
+//!
+//! Set `auto_slash_threshold = 0` to disable the threshold events entirely.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol,
