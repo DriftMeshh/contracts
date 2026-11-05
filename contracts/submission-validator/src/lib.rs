@@ -97,6 +97,22 @@ pub struct Reading {
     pub accepted: bool,
 }
 
+/// Emitted when a device's cumulative rejected-reading count crosses the
+/// auto-slash threshold configured at initialize time.
+/// Topics: ["auto_slash", device_address]
+/// Data: (rejected_count, threshold)
+/// This event is the signal for an off-chain monitor or admin to call
+/// device-registry.raise_dispute or device-registry.deactivate_device.
+/// The contract does not auto-deactivate (separation of concerns).
+#[contractevent]
+#[derive(Clone)]
+pub struct AutoSlashThresholdReached {
+    #[topic]
+    pub device: Address,
+    pub rejected_count: u32,
+    pub threshold: u32,
+}
+
 #[contract]
 pub struct SubmissionValidator;
 
