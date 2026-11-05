@@ -238,9 +238,32 @@ impl SubmissionValidator {
             let total: u32 = env.storage().temporary().get(&total_key).unwrap_or(0);
             env.storage().temporary().set(&total_key, &(total + 1));
             env.storage().temporary().extend_ttl(&total_key, 120_960, 120_960);
-        }
+        } else {
+            // Track cumulative rejected readings per device. These serve as
+            // on-chain evidence for the dispute mechanism: a high rejected count
+            // relative to SubmissionCount signals systematic bad data rather
+            // than a one-off calibration glitch.
+            let rej_key = DataKey::RejectedCount(device.clone());
+            let prev_rej: u32 = env.storage().temporary().get(&rej_key).unwrap_or(0);
+            let new_rej = prev_rej + 1;
+            env.storage().temporary().set(&rej_key, &new_rej);
+            env.storage().temporary().extend_ttl(&rej_key, 120_960, 120_960);
 
-        Reading {
+            // Check if the device has crossed the auto-slash threshold.
+            let threshold: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::AutoSlashThreshold)
+                .unwrap_or(0);
+            if threshold > 0 && new_rej >= threshold {
+                AutoSlashThresholdReached {
+                    device: device.clone(),
+                    rejected_count: new_rej,
+                    threshold,
+                }
+                .publish(&env);
+            }
+        }        Reading {
             device,
             region_code,
             epoch,
