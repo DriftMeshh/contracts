@@ -227,6 +227,95 @@ impl DeviceRegistry {
         Ok(new_open)
     }
 
+    /// Only the admin can resolve a dispute. If \`upheld\` is true the device is
+    /// immediately deactivated (slashed); if false it is left active (dismissed).
+    /// Either way the open dispute count is cleared so a new dispute can be
+    /// raised in the future.
+    pub fn resolve_dispute(
+        env: Env,
+        admin_caller: Address,
+        device: Address,
+        upheld: bool,
+    ) -> Result<(), Error> {
+        admin_caller.require_auth();
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin_caller != stored_admin {
+            return Err(Error::NotOwnerOrAdmin);
+        }
+
+        // Guard: there must be an open dispute to resolve.
+        let open_key = DataKey::OpenDisputeCount(device.clone());
+        let open: u32 = env.storage().instance().get(&open_key).unwrap_or(0);
+        if open == 0 {
+            return Err(Error::NoOpenDispute);
+        }
+
+        // Clear the open dispute.
+        env.storage().instance().set(&open_key, &0u32);
+
+        let device_active: bool;
+
+        if upheld {
+            // Update the lifetime upheld counter.
+            let upheld_key = DataKey::UpheldDisputeCount(device.clone());
+            let prev_upheld: u32 = env.storage().instance().get(&upheld_key).unwrap_or(0);
+            let new_upheld = prev_upheld + 1;
+            env.storage().instance().set(&upheld_key, &new_upheld);
+
+            // Deactivate the device (slash it).
+            let dev_key = DataKey::Device(device.clone());
+            if let Some(mut record) = env.storage().persistent().get::<DataKey, Device>(&dev_key) {
+                record.active = false;
+                env.storage().persistent().set(&dev_key, &record);
+            }
+            device_active = false;
+
+            DeviceDeactivated {
+                device: device.clone(),
+                reason: Symbol::new(&env, "dispute"),
+            }
+            .publish(&env);
+
+            DisputeResolved {
+                device,
+                upheld: true,
+                upheld_total: new_upheld,
+                device_active: false,
+            }
+            .publish(&env);
+        } else {
+            // Dismissed — device stays active, upheld count unchanged.
+            let upheld_total: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::UpheldDisputeCount(device.clone()))
+                .unwrap_or(0);
+
+            let dev_key = DataKey::Device(device.clone());
+            device_active = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Device>(&dev_key)
+                .map(|d| d.active)
+                .unwrap_or(false);
+
+            DisputeResolved {
+                device,
+                upheld: false,
+                upheld_total,
+                device_active,
+            }
+            .publish(&env);
+        }
+
+        Ok(())
+    }
+
     /// The registry admin can re-enable a previously deactivated device —
     /// for example, after a dispute has been resolved in the device's favour,
     /// or after a hardware replacement has been verified off-chain.
