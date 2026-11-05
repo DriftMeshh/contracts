@@ -102,6 +102,12 @@ impl DeviceRegistry {
             active: true,
         };
         env.storage().persistent().set(&key, &record);
+        // Extend the TTL to ~1 year of ledger slots (5 seconds per ledger,
+        // 365*24*3600/5 = 6_307_200 ledgers). Without this call a long-lived
+        // device entry could be archived by the Soroban fee-based archival
+        // system once the default TTL expires, causing \`is_active\` to return
+        // false for a device that is still operational.
+        env.storage().persistent().extend_ttl(&key, 6_307_200, 6_307_200);
         RegDev {
             device,
             device_type: record.device_type.clone(),
