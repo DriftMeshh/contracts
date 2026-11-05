@@ -422,6 +422,29 @@ mod test {
     }
 
     #[test]
+    fn unauthorized_deactivation_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        // A random third party (neither owner nor admin) cannot deactivate.
+        let stranger = Address::generate(&env);
+        let result = client.try_deactivate_device(&device, &stranger);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+        // Device remains active.
+        assert!(client.is_active(&device));
+    }
+
+    #[test]
     fn raise_dispute_increments_open_count() {
         let env = Env::default();
         env.mock_all_auths();
