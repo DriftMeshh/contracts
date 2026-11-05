@@ -44,7 +44,7 @@ mod e2e {
         let region = 42u32;
         let validator_id = env.register(SubmissionValidator, ());
         let validator = SubmissionValidatorClient::new(&env, &validator_id);
-        validator.initialize(&admin, &registry_id, &2000, &epoch_seconds);
+        validator.initialize(&admin, &registry_id, &2000, &epoch_seconds, &0);
 
         assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2500));
         assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2550));

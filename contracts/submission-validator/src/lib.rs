@@ -144,12 +144,17 @@ impl SubmissionValidator {
     ///
     /// `epoch_seconds` is the length of one epoch in ledger seconds; it
     /// defines the cycle-end cutoff that freezes an epoch's total.
+    ///
+    /// `auto_slash_threshold` is how many cumulative rejected readings a device
+    /// may accumulate before an `AutoSlashThresholdReached` event is emitted.
+    /// Set to 0 to disable threshold events entirely.
     pub fn initialize(
         env: Env,
         admin: Address,
         registry: Address,
         tolerance_bps: u32,
         epoch_seconds: u64,
+        auto_slash_threshold: u32,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -160,6 +165,7 @@ impl SubmissionValidator {
         env.storage().instance().set(&DataKey::ToleranceBps, &tolerance_bps);
         env.storage().instance().set(&DataKey::EpochSeconds, &epoch_seconds);
         env.storage().instance().set(&DataKey::EpochZero, &env.ledger().timestamp());
+        env.storage().instance().set(&DataKey::AutoSlashThreshold, &auto_slash_threshold);
         Ok(())
     }
 
@@ -303,7 +309,7 @@ mod test {
 
         let validator_id = env.register(SubmissionValidator, ());
         let validator_client = SubmissionValidatorClient::new(env, &validator_id);
-        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &0);
 
         (validator_client, registry_id)
     }

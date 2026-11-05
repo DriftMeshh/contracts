@@ -262,7 +262,7 @@ mod test {
 
         let validator_id = env.register(submission_validator::SubmissionValidator, ());
         let validator_client = submission_validator::SubmissionValidatorClient::new(env, &validator_id);
-        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &0);
 
         let (token_addr, token_admin_client, token_client) = create_token(env, &admin);
 
