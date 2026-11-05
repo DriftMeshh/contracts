@@ -2,13 +2,14 @@
 //! contracts wired together exactly as they would be on-chain.
 //!
 //! device registers → submits readings → consumer subscribes (funding
-//! the pool) → device claims its payout → balances check out.
+//! the pool) → epoch closes → device claims its proportional payout →
+//! balances check out.
 
 #[cfg(test)]
 mod e2e {
     use device_registry::{DeviceRegistry, DeviceRegistryClient};
     use payment_streamer::{PaymentStreamer, PaymentStreamerClient};
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Ledger};
     use soroban_sdk::{token, Address, Env, Symbol};
     use submission_validator::{SubmissionValidator, SubmissionValidatorClient};
     use subscription_market::{SubscriptionMarket, SubscriptionMarketClient};
@@ -37,13 +38,14 @@ mod e2e {
         registry.register_device(&device, &device_owner, &device_type, &404_500, &-736_900);
         assert!(registry.is_active(&device));
 
-        // -- submission-validator --
+        // -- submission-validator (time-boxed epochs) --
+        let epoch = 1u32;
+        let epoch_seconds: u64 = 86_400; // one day
+        let region = 42u32;
         let validator_id = env.register(SubmissionValidator, ());
         let validator = SubmissionValidatorClient::new(&env, &validator_id);
-        validator.initialize(&admin, &registry_id, &2000);
+        validator.initialize(&admin, &registry_id, &2000, &epoch_seconds);
 
-        let epoch = 1u32;
-        let region = 42u32;
         assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2500));
         assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2550));
         assert!(validator.submit_reading(&device, &device_type, &region, &epoch, &2600));
@@ -54,12 +56,12 @@ mod e2e {
         let accepted = validator.submit_reading(&device, &device_type, &region, &epoch, &999_999);
         assert!(!accepted);
         assert_eq!(validator.get_submission_count(&device, &epoch), 3);
+        assert_eq!(validator.get_total_submissions(&epoch), 3);
 
-        // -- payment-streamer --
-        let reward_rate: i128 = 25;
+        // -- payment-streamer (proportional payouts, no flat rate) --
         let streamer_id = env.register(PaymentStreamer, ());
         let streamer = PaymentStreamerClient::new(&env, &streamer_id);
-        streamer.initialize(&admin, &validator_id, &token_addr, &reward_rate);
+        streamer.initialize(&admin, &validator_id, &token_addr);
         assert_eq!(streamer.pool_balance(), 0);
 
         // -- subscription-market --
@@ -79,10 +81,19 @@ mod e2e {
         assert_eq!(token.balance(&consumer), 10_000 - price_per_period * 2);
         assert_eq!(streamer.pool_balance(), price_per_period * 2);
 
-        // -- device claims its payout for the epoch --
-        let expected_payout = 3 * reward_rate; // 3 valid readings, outlier excluded
+        // The epoch must close before its total is final and payouts can be
+        // computed. Advance the ledger to the epoch's end.
+        let epoch_end = validator.epoch_end(&epoch);
+        env.ledger().with_mut(|li| li.timestamp = epoch_end);
+        assert!(validator.is_epoch_final(&epoch));
+
+        // -- device claims its proportional payout for the epoch --
+        // One device holds all 3 of the epoch's submissions, so its share is
+        // 3/3 = the whole pool that was snapshotted at first claim.
+        let expected_payout = price_per_period * 2;
         let payout = streamer.claim(&device, &epoch);
         assert_eq!(payout, expected_payout);
+        assert_eq!(streamer.epoch_pool(&epoch), expected_payout);
         assert_eq!(token.balance(&device), expected_payout);
         assert_eq!(streamer.pool_balance(), price_per_period * 2 - expected_payout);
 

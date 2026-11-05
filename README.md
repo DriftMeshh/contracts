@@ -49,8 +49,8 @@ or two methods it actually needs to call on its neighbour.)
 | Contract | Purpose | Key entrypoints |
 |---|---|---|
 | `device-registry` | A device (its own keypair) registers itself: owner, type, coarse location. Owner/admin can deactivate it. | `register_device`, `deactivate_device`, `is_active`, `get_device` |
-| `submission-validator` | Accepts signed readings, checks the device is active (cross-call), rejects readings that are wildly off the region's rolling average, counts valid submissions per device per epoch. | `submit_reading`, `get_submission_count`, `get_region_average` |
-| `payment-streamer` | Pays a device `submission_count * reward_rate` in a stablecoin, capped by its own token balance. A device claims once per epoch. | `claim`, `pool_balance`, `set_reward_rate` |
+| `submission-validator` | Accepts signed readings, checks the device is active (cross-call), rejects readings that are wildly off the region's rolling average, and counts valid submissions per device per epoch — and per epoch overall. Epochs are time-boxed; once an epoch's window closes its total is frozen (`EpochClosed`). | `submit_reading`, `get_submission_count`, `get_total_submissions`, `is_epoch_final`, `epoch_end`, `get_region_average` |
+| `payment-streamer` | Pays a device a *proportional share* of an epoch's pool — `epoch_pool * device_count / total_count`, where `total_count` is the epoch's total valid submissions (from `submission-validator`) and `epoch_pool` is snapshotted when the epoch closes. Payout is independent of claim order; a device claims once per epoch. | `claim`, `pool_balance`, `epoch_pool`, `has_claimed` |
 | `subscription-market` | Consumers pay for feed access; payment goes straight into `payment-streamer`'s token balance, closing the funding loop. | `subscribe`, `is_active`, `set_price` |
 
 ### Honest limitations (v1 scope)
@@ -65,7 +65,7 @@ or two methods it actually needs to call on its neighbour.)
   v1 so the full loop is demoable without physical sensors.
 - **No storage TTL/rent management** is implemented on the temporary
   per-epoch counters yet — see the issues list below.
-- **No live-network testing yet.** All 13 tests (unit + cross-contract +
+- **No live-network testing yet.** All 18 tests (unit + cross-contract +
   one full end-to-end flow in `tests-e2e`, covering register → submit →
   subscribe → claim across all four contracts) run in Soroban's in-process
   test environment, not against an actual testnet/futurenet deployment.
@@ -83,7 +83,7 @@ Requires Rust stable with the `wasm32v1-none` target, and the Stellar CLI
 
 ```bash
 rustup target add wasm32v1-none
-cargo test --workspace        # 13 tests: per-contract units + one full e2e flow in tests-e2e
+cargo test --workspace        # 18 tests: per-contract units + one full e2e flow in tests-e2e
 stellar contract build        # produces target/wasm32v1-none/release/*.wasm
 ```
 
@@ -105,5 +105,4 @@ Scoped so each is a separable GitHub issue at a realistic complexity tier:
 **High (200 pts)**
 - Design and implement stake-weighted outlier scoring (replace the simple rolling-average check in `submission-validator` with something resistant to a device slowly dragging its own region average)
 - Implement partial/dispute-based slashing for devices caught submitting bad data
-- Add a global per-epoch submission total to `submission-validator` so `payment-streamer` can pay *proportional* shares instead of a flat per-submission rate (closer to how Stellar Wave itself does quadratic-scaled payouts)
 - Deploy all four contracts to Stellar testnet and extend `tests-e2e`'s flow into a real integration test against a live network (today it only runs in Soroban's in-process test environment)
