@@ -282,6 +282,19 @@ impl SubmissionValidator {
             .unwrap_or(0)
     }
 
+    /// Cumulative count of readings that failed the outlier check for a
+    /// device, across all epochs within the current TTL window. Returns 0 if
+    /// the device has never had a reading rejected (or if the counter has
+    /// expired). This is the primary on-chain evidence metric for the dispute
+    /// mechanism: a high value relative to SubmissionCount(device, epoch)
+    /// indicates systematic bad data rather than a one-off anomaly.
+    pub fn get_rejected_count(env: Env, device: Address) -> u32 {
+        env.storage()
+            .temporary()
+            .get(&DataKey::RejectedCount(device))
+            .unwrap_or(0)
+    }
+
     /// Total accepted readings across *all* devices in an epoch. Frozen
     /// once the epoch is final (no readings accepted after the window
     /// closes), so this is the stable denominator for proportional payouts.
