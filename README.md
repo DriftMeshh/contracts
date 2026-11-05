@@ -91,6 +91,59 @@ cargo test --workspace        # 30 tests: per-contract units + one full e2e flow
 stellar contract build        # produces target/wasm32v1-none/release/*.wasm
 ```
 
+## Dispute and slashing mechanism
+
+The dispute/slashing mechanism gives real economic weight to data quality
+without requiring a separate staking contract (issue #6 / stake-weighted
+scoring has not landed yet — this design deliberately does not depend on it).
+
+### How it works
+
+1. **Evidence accumulation** (`submission-validator`): Every rejected reading
+   increments `RejectedCount(device)` in temporary storage. When a device
+   crosses the `auto_slash_threshold` set at deploy time, an
+   `AutoSlashThresholdReached` event is emitted. This event is the signal for
+   an off-chain monitor (admin bot) to investigate.
+
+2. **Raising a dispute** (`device-registry.raise_dispute`): Any address can
+   call `raise_dispute(disputer, device, evidence_hash)`. The `evidence_hash`
+   is a 64-bit truncated hash of an off-chain evidence bundle (e.g.
+   `hash(device_address || epoch || url_of_logs)`). Only one open dispute per
+   device is permitted at a time — this prevents griefing through dispute
+   flooding. The device remains **active** while a dispute is pending; it
+   continues submitting readings.
+
+3. **Admin resolution** (`device-registry.resolve_dispute`): The admin reviews
+   the off-chain evidence and calls `resolve_dispute(admin, device, upheld)`.
+   - `upheld=true` → device is immediately deactivated (slashed). The
+     `DeviceDeactivated(reason="dispute")` and `DisputeResolved` events are
+     emitted. The lifetime `UpheldDisputeCount` is incremented.
+   - `upheld=false` → device is untouched. `DisputeResolved(upheld=false)` is
+     emitted. No lasting effect on the device's state.
+
+4. **Reactivation** (`device-registry.reactivate_device`): If a dispute is
+   upheld but later found to have been in error (e.g. a hardware replacement
+   verified off-chain), the admin can reactivate the device.
+
+### Trust assumptions (explicit)
+
+- **Admin is trusted to make honest resolution decisions.** A corrupted admin
+  can uphold fabricated disputes or dismiss legitimate ones. A Stellar
+  multi-sig admin (M-of-N threshold signing on the admin keypair) hardens this
+  without any contract changes.
+- **Disputer accountability.** A disputer's address is permanently on-chain in
+  the `DisputeRaised` event. Raising a false dispute costs gas and creates a
+  public record.
+- **One-dispute-at-a-time cap.** Prevents dispute flooding by malicious
+  competitors. A disputer must wait for resolution before raising another,
+  slowing any campaign of harassment.
+- **No bond in v1.** Without a deposit requirement (issue #6 hasn't landed),
+  the one-dispute cap is the only cost imposed on a bad-faith disputer. A
+  bond-based extension is a natural follow-up.
+- **Deactivation is the only v1 'slash'.** No stake is burned (no staking
+  contract exists yet). Economic consequence is loss of future payouts while
+  deactivated.
+
 ## Suggested Stellar Wave issue breakdown
 
 Scoped so each is a separable GitHub issue at a realistic complexity tier:
