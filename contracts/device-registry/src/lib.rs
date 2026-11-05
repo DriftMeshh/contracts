@@ -478,4 +478,59 @@ mod test {
         assert_eq!(open, 1);
         assert_eq!(upheld, 0);
     }
+
+    #[test]
+    fn upheld_dispute_deactivates_device() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+        assert!(client.is_active(&device));
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0xabcd_u64);
+
+        // Admin upholds the dispute → device must be deactivated.
+        client.resolve_dispute(&admin, &device, &true);
+
+        assert!(!client.is_active(&device));
+        let (open, upheld) = client.get_dispute_counts(&device);
+        assert_eq!(open, 0);   // dispute is cleared
+        assert_eq!(upheld, 1); // lifetime counter incremented
+    }
+
+    #[test]
+    fn dismissed_dispute_leaves_device_active() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0x1234_u64);
+
+        // Admin dismisses the dispute → device remains active.
+        client.resolve_dispute(&admin, &device, &false);
+
+        assert!(client.is_active(&device));
+        let (open, upheld) = client.get_dispute_counts(&device);
+        assert_eq!(open, 0);   // cleared even on dismissal
+        assert_eq!(upheld, 0); // upheld count not incremented on dismissal
+    }
 }
