@@ -260,7 +260,7 @@ impl SubmissionValidator {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{Address as _, Ledger};
 
     const EPOCH_SECONDS: u64 = 100;
 

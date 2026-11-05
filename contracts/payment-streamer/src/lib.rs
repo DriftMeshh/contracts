@@ -222,6 +222,7 @@ impl PaymentStreamer {
 mod test {
     use super::*;
     use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::Symbol;
 
     const EPOCH_SECONDS: u64 = 100;
     const EPOCH: u32 = 1;
