@@ -116,6 +116,11 @@ impl SubscriptionMarket {
         let new_expiry = base + period_seconds * periods as u64;
 
         env.storage().persistent().set(&expiry_key, &new_expiry);
+        // Extend the TTL so an active subscriber's expiry record is never
+        // archived before the subscription itself expires. We use ~1 year of
+        // ledger slots (6_307_200) as the target, which comfortably covers
+        // the maximum sensible subscription length.
+        env.storage().persistent().extend_ttl(&expiry_key, 6_307_200, 6_307_200);
         Subscribe {
             subscriber,
             periods,
