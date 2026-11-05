@@ -112,6 +112,7 @@ impl DeviceRegistry {
 
     /// The device's owner (or the registry admin) can deactivate it —
     /// e.g. decommissioned hardware or a device caught submitting bad data.
+    /// Emits a `DeviceDeactivated` event with reason "owner" or "admin".
     pub fn deactivate_device(env: Env, device: Address, caller: Address) -> Result<(), Error> {
         caller.require_auth();
 
@@ -125,12 +126,18 @@ impl DeviceRegistry {
         let admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
         let admin = admin.ok_or(Error::NotInitialized)?;
 
-        if caller != record.owner && caller != admin {
+        let reason = if caller == admin {
+            Symbol::new(&env, "admin")
+        } else if caller == record.owner {
+            Symbol::new(&env, "owner")
+        } else {
             return Err(Error::NotOwnerOrAdmin);
-        }
+        };
 
         record.active = false;
         env.storage().persistent().set(&key, &record);
+
+        DeviceDeactivated { device, reason }.publish(&env);
         Ok(())
     }
 
