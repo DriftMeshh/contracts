@@ -6,6 +6,30 @@
 //! itself on-chain, declaring who owns it, what kind of readings it
 //! produces, and a coarse location. Downstream contracts (submission
 //! validation, payouts) check in here before trusting a device's data.
+//!
+//! ## Dispute and slashing mechanism
+//!
+//! Any address may call `raise_dispute(disputer, device, evidence_hash)` to
+//! flag a device for admin review. At most one open dispute is allowed per
+//! device at a time (anti-griefing). The device remains **active** while the
+//! dispute is pending — it is not automatically deactivated.
+//!
+//! The admin calls `resolve_dispute(admin, device, upheld)`:
+//! - `upheld=true` → device is immediately deactivated (slashed), the
+//!   `UpheldDisputeCount` is incremented permanently, and both
+//!   `DeviceDeactivated` and `DisputeResolved` events are emitted.
+//! - `upheld=false` → device is untouched, only `DisputeResolved` is emitted.
+//!
+//! The admin can reactivate a deactivated device via `reactivate_device`.
+//!
+//! ## Trust assumptions
+//!
+//! - The admin is trusted to make honest resolution decisions.
+//! - A Stellar multi-sig admin (M-of-N threshold signing) hardens this
+//!   without any contract changes.
+//! - The one-dispute-at-a-time cap prevents dispute flooding; a disputer
+//!   must wait for resolution before raising another claim.
+//! - No staking bond is required in v1 (issue #6 not yet landed).
 
 use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol};
 
