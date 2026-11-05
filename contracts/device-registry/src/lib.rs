@@ -353,6 +353,22 @@ impl DeviceRegistry {
             .ok_or(Error::DeviceNotFound)
     }
 
+    /// Returns (open_disputes, lifetime_upheld_disputes) for a device.
+    /// Both return 0 if no disputes have ever been raised against the device.
+    pub fn get_dispute_counts(env: Env, device: Address) -> (u32, u32) {
+        let open: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OpenDisputeCount(device.clone()))
+            .unwrap_or(0);
+        let upheld: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UpheldDisputeCount(device))
+            .unwrap_or(0);
+        (open, upheld)
+    }
+
     /// Cheap existence+status check other contracts cross-call before
     /// trusting a device's submission.
     pub fn is_active(env: Env, device: Address) -> bool {
