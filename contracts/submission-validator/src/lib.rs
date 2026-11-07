@@ -351,6 +351,17 @@ impl SubmissionValidator {
         compute_epoch_end(&env, epoch)
     }
 
+    /// The ledger timestamp recorded at `initialize` — the zero-point every
+    /// epoch number is relative to (epoch `e` covers
+    /// `[epoch_zero + e*epoch_seconds, epoch_zero + (e+1)*epoch_seconds)`).
+    /// Before this getter existed, callers had to back it out via
+    /// `epoch_end(0) - epoch_seconds`; expose it directly since that
+    /// back-calculation is non-obvious and got a real caller's epoch math
+    /// wrong against Unix epoch zero instead of this value.
+    pub fn get_epoch_zero(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::EpochZero).unwrap_or(0)
+    }
+
     /// Current rolling average for a region+device-type bucket, 0 if none yet.
     pub fn get_region_average(env: Env, region_code: u32, device_type: Symbol) -> i64 {
         let agg: Option<(i64, u32)> = env
@@ -515,6 +526,22 @@ mod test {
         assert!(!validator.is_epoch_final(&1));
         close_epoch(&env, &validator, 1);
         assert!(validator.is_epoch_final(&1));
+    }
+
+    #[test]
+    fn get_epoch_zero_matches_the_back_calculation_from_epoch_end() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, _registry_id) = setup(&env);
+
+        // get_epoch_zero() is the direct getter; epoch_end(0) - epoch_seconds
+        // is the back-calculation callers used before this getter existed.
+        // They must agree exactly.
+        let epoch_zero = validator.get_epoch_zero();
+        assert_eq!(epoch_zero, validator.epoch_end(&0) - EPOCH_SECONDS);
+        // It's also exactly the ledger timestamp at initialize() time, since
+        // no time has advanced yet in this test.
+        assert_eq!(epoch_zero, env.ledger().timestamp());
     }
 
     #[test]
