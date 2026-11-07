@@ -569,6 +569,25 @@ mod test {
     }
 
     #[test]
+    fn batch_submit_reading_all_accepted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        // All three values are close enough together that none should be
+        // rejected as an outlier (the first always passes, and 2510/2490
+        // are well within tolerance of the running average).
+        let readings = Vec::from_array(&env, [(1u32, 1u32, 2500i32), (1u32, 1u32, 2510i32), (1u32, 1u32, 2490i32)]);
+        let results = validator.batch_submit_reading(&device, &device_type, &readings);
+
+        assert_eq!(results, Vec::from_array(&env, [true, true, true]));
+        assert_eq!(validator.get_submission_count(&device, &1), 3);
+        assert_eq!(validator.get_total_submissions(&1), 3);
+    }
+
+    #[test]
     fn total_submissions_tracks_across_devices() {
         let env = Env::default();
         env.mock_all_auths();
