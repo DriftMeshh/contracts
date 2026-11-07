@@ -624,4 +624,102 @@ mod test {
         let (open_count, _) = client.get_dispute_counts(&device);
         assert_eq!(open_count, 1);
     }
+
+    #[test]
+    fn owner_cannot_reactivate_device() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+        client.deactivate_device(&device, &owner);
+        assert!(!client.is_active(&device));
+
+        // The owner deactivated it, but only the admin may reactivate —
+        // an owner must not be able to unilaterally undo an
+        // admin-initiated or dispute-driven deactivation.
+        let result = client.try_reactivate_device(&device, &owner);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+        assert!(!client.is_active(&device));
+    }
+
+    #[test]
+    fn stranger_cannot_reactivate_device() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+        client.deactivate_device(&device, &admin);
+
+        let stranger = Address::generate(&env);
+        let result = client.try_reactivate_device(&device, &stranger);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+        assert!(!client.is_active(&device));
+    }
+
+    #[test]
+    fn owner_cannot_resolve_dispute() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0x5555_u64);
+
+        // The device's own owner must not be able to resolve a dispute
+        // against it — only the admin can.
+        let result = client.try_resolve_dispute(&owner, &device, &false);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+        let (open_count, _) = client.get_dispute_counts(&device);
+        assert_eq!(open_count, 1); // dispute remains open
+    }
+
+    #[test]
+    fn stranger_cannot_resolve_dispute() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let disputer = Address::generate(&env);
+        client.raise_dispute(&disputer, &device, &0x6666_u64);
+
+        let stranger = Address::generate(&env);
+        let result = client.try_resolve_dispute(&stranger, &device, &true);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+        let (open_count, _) = client.get_dispute_counts(&device);
+        assert_eq!(open_count, 1); // dispute remains open
+    }
 }
