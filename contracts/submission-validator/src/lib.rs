@@ -18,6 +18,10 @@
 //! `is_epoch_final(e)` returns true. Downstream (`payment-streamer`)
 //! uses that finality gate so payouts are computed against a total that
 //! can no longer change — see the proportional-share payout model there.
+//! The exact boundary second is load-bearing (a one-second timing bug here
+//! would mean a late reading sneaks into a "final" total, or a legitimate
+//! last-second reading gets wrongly rejected) and is covered directly by
+//! tests at `epoch_end(e) - 1` (still open) and `epoch_end(e)` (closed).
 //!
 //! The outlier check is deliberately simple for v1 — it is NOT a
 //! consensus mechanism. It stops a single device's lie from being wildly
