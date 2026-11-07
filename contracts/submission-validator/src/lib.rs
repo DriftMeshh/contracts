@@ -198,20 +198,18 @@ impl SubmissionValidator {
         Ok(())
     }
 
-    /// `value` is a fixed-point reading (e.g. temperature * 100).
-    /// `region_code` is a coarse geohash-style grid cell the caller
-    /// computes off-chain from the device's registered lat/lon.
-    /// Returns whether the reading was accepted as plausible.
-    pub fn submit_reading(
-        env: Env,
+    /// Shared validation+storage body for a single reading, used by both
+    /// `submit_reading` and `batch_submit_reading`. Callers are responsible
+    /// for their own `device.require_auth()` — this doesn't call it, so a
+    /// batch call only authorizes once instead of once per reading.
+    fn validate_and_record_reading(
+        env: &Env,
         device: Address,
         device_type: Symbol,
         region_code: u32,
         epoch: u32,
         value: i32,
     ) -> Result<bool, Error> {
-        device.require_auth();
-
         let registry: Address = env
             .storage()
             .instance()
@@ -221,11 +219,11 @@ impl SubmissionValidator {
         // Reject readings for an epoch whose window has already closed.
         // Its total submission count is final at that point, so letting a
         // late reading in would change what payouts are computed against.
-        if env.ledger().timestamp() >= compute_epoch_end(&env, epoch) {
+        if env.ledger().timestamp() >= compute_epoch_end(env, epoch) {
             return Err(Error::EpochClosed);
         }
 
-        let registry_client = DeviceRegistryClient::new(&env, &registry);
+        let registry_client = DeviceRegistryClient::new(env, &registry);
         if !registry_client.is_active(&device) {
             return Err(Error::DeviceNotActive);
         }
@@ -290,18 +288,36 @@ impl SubmissionValidator {
                     rejected_count: new_rej,
                     threshold,
                 }
-                .publish(&env);
+                .publish(env);
             }
-        }        Reading {
+        }
+
+        Reading {
             device,
             region_code,
             epoch,
             value,
             accepted,
         }
-        .publish(&env);
+        .publish(env);
 
         Ok(accepted)
+    }
+
+    /// `value` is a fixed-point reading (e.g. temperature * 100).
+    /// `region_code` is a coarse geohash-style grid cell the caller
+    /// computes off-chain from the device's registered lat/lon.
+    /// Returns whether the reading was accepted as plausible.
+    pub fn submit_reading(
+        env: Env,
+        device: Address,
+        device_type: Symbol,
+        region_code: u32,
+        epoch: u32,
+        value: i32,
+    ) -> Result<bool, Error> {
+        device.require_auth();
+        Self::validate_and_record_reading(&env, device, device_type, region_code, epoch, value)
     }
 
     pub fn get_submission_count(env: Env, device: Address, epoch: u32) -> u32 {
