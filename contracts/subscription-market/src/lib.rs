@@ -281,4 +281,13 @@ mod test {
         // setup() initializes with PRICE=200.
         assert_eq!(market.get_price(), PRICE);
     }
+
+    #[test]
+    fn get_period_seconds_returns_the_initialized_value() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, _subscriber, _token_client, _reward_pool) = setup(&env);
+
+        assert_eq!(market.get_period_seconds(), PERIOD_SECONDS);
+    }
 }
