@@ -545,6 +545,20 @@ mod test {
     }
 
     #[test]
+    fn is_epoch_final_transitions_exactly_at_the_boundary_second() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, _registry_id) = setup(&env);
+
+        let end = validator.epoch_end(&1);
+        env.ledger().with_mut(|li| li.timestamp = end - 1);
+        assert!(!validator.is_epoch_final(&1));
+
+        env.ledger().with_mut(|li| li.timestamp = end);
+        assert!(validator.is_epoch_final(&1));
+    }
+
+    #[test]
     fn a_reading_one_second_before_close_is_accepted() {
         let env = Env::default();
         env.mock_all_auths();
