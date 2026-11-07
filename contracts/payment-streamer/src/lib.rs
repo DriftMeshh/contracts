@@ -298,6 +298,60 @@ impl PaymentStreamer {
     pub fn has_claimed(env: Env, device: Address, epoch: u32) -> bool {
         env.storage().temporary().has(&DataKey::Claimed(device, epoch))
     }
+
+    /// Read-only preview of what `claim(device, epoch)` would currently pay
+    /// out, without snapshotting the pool or transferring anything. Lets a
+    /// device operator or the frontend show an expected amount before
+    /// claiming.
+    ///
+    /// If the epoch's pool has already been snapshotted (someone has
+    /// claimed for it), this returns the exact amount `claim` will pay —
+    /// the two can never disagree, since both read the same snapshot.
+    ///
+    /// If nobody has claimed for this epoch yet, there is no snapshot to
+    /// read, so this previews against the contract's *current live
+    /// balance* instead. That preview is only an estimate: the real
+    /// snapshot `claim` takes is whatever the balance is at the moment of
+    /// the *first* claim, which could differ if the balance changes (e.g.
+    /// another subscription payment arrives) between this preview and that
+    /// claim. Chose this over returning an error for the not-yet-claimed
+    /// case because showing an estimate is more useful to a caller than no
+    /// information at all, as long as the estimate's limitation is clear.
+    pub fn preview_payout(env: Env, device: Address, epoch: u32) -> Result<i128, Error> {
+        let validator: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Validator)
+            .ok_or(Error::NotInitialized)?;
+        let validator_client = SubmissionValidatorClient::new(&env, &validator);
+
+        if !validator_client.is_epoch_final(&epoch) {
+            return Err(Error::EpochNotFinal);
+        }
+
+        let device_count = validator_client.get_submission_count(&device, &epoch);
+        if device_count == 0 {
+            return Err(Error::NothingToClaim);
+        }
+        let total = validator_client.get_total_submissions(&epoch);
+        if total == 0 {
+            return Err(Error::NothingToClaim);
+        }
+
+        let pool: i128 = match env.storage().instance().get(&DataKey::EpochPoolSnapshot(epoch)) {
+            Some(p) => p,
+            None => {
+                let reward_token: Address = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::RewardToken)
+                    .ok_or(Error::NotInitialized)?;
+                token::Client::new(&env, &reward_token).balance(&env.current_contract_address())
+            }
+        };
+
+        Ok(pool * (device_count as i128) / (total as i128))
+    }
 }
 
 #[cfg(test)]
@@ -624,5 +678,64 @@ mod test {
         streamer.unpause(&admin);
         let expected_unpaused = Unpaused { admin: admin.clone() }.to_xdr(&env, &streamer_id);
         assert_eq!(env.events().all().events().last(), Some(&expected_unpaused));
+    }
+
+    #[test]
+    fn preview_payout_matches_the_not_yet_claimed_live_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id, streamer, streamer_id, token_admin, _token) = wire(&env);
+        let a = register_device(&env, &validator, &registry_id, 2);
+        let b = register_device(&env, &validator, &registry_id, 1);
+
+        token_admin.mint(&streamer_id, &300);
+        finalize_epoch(&env, &validator);
+
+        // Nobody has claimed yet, so no snapshot exists — preview reads the
+        // live balance instead, same 2/3 and 1/3 split as the real claim.
+        assert_eq!(streamer.epoch_pool(&EPOCH), 0);
+        assert_eq!(streamer.preview_payout(&a, &EPOCH), 200);
+        assert_eq!(streamer.preview_payout(&b, &EPOCH), 100);
+
+        // Previewing doesn't snapshot or transfer anything.
+        assert_eq!(streamer.epoch_pool(&EPOCH), 0);
+        assert_eq!(streamer.pool_balance(), 300);
+    }
+
+    #[test]
+    fn preview_payout_matches_the_real_claim_once_snapshotted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id, streamer, streamer_id, token_admin, token) = wire(&env);
+        let a = register_device(&env, &validator, &registry_id, 2);
+        let b = register_device(&env, &validator, &registry_id, 1);
+
+        token_admin.mint(&streamer_id, &300);
+        finalize_epoch(&env, &validator);
+
+        // A claims first, snapshotting the pool.
+        let a_payout = streamer.claim(&a, &EPOCH);
+        assert_eq!(a_payout, 200);
+
+        // Previewing B's payout now must read the snapshot, not the (now
+        // smaller) live balance, and must match what claim() actually pays.
+        let preview = streamer.preview_payout(&b, &EPOCH);
+        assert_eq!(preview, 100);
+        let b_payout = streamer.claim(&b, &EPOCH);
+        assert_eq!(preview, b_payout);
+        assert_eq!(token.balance(&b), 100);
+    }
+
+    #[test]
+    fn preview_payout_before_epoch_final_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id, streamer, streamer_id, token_admin, _token) = wire(&env);
+        let device = register_device(&env, &validator, &registry_id, 2);
+        token_admin.mint(&streamer_id, &1_000);
+
+        // Epoch not finalized yet.
+        let result = streamer.try_preview_payout(&device, &EPOCH);
+        assert_eq!(result, Err(Ok(Error::EpochNotFinal)));
     }
 }
