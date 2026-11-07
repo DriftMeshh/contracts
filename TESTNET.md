@@ -1,24 +1,30 @@
 # Live testnet deployment
 
-Redeployed 2026-11-06 (fresh contract IDs — see below) to pick up the
-`#[contractevent]` migration and the proportional-payout/epoch-finality
-model, and exercised through a full end-to-end flow again — not just
+Redeployed again 2026-11-06 (fresh contract IDs — see below) to pick up
+the dispute-slashing feature (device-registry disputes/reactivation,
+submission-validator's auto-slash threshold, payment-streamer's
+pause/unpause), and exercised through a full end-to-end flow — not just
 deployed and left idle. This is the evidence that the contracts and the
 `indexer` repo actually work together against a real network, not only
 in the in-process test environment. There is no upgrade mechanism in any
-of these contracts, so adopting new contract code means new addresses
-and a fresh on-chain state, not an in-place update — the previous
-deployment's IDs are no longer live.
+of these contracts (see the open issue for this), so adopting new
+contract code means new addresses and a fresh on-chain state, not an
+in-place update — previous deployments' IDs are no longer live.
 
 ## Contract IDs (Stellar testnet)
 
 | Contract | ID |
 |---|---|
-| `device-registry` | `CAZUUT5WRULDICF67IFHUWJZZTGP7BOCPJNIIGE7GDZHBAS7ZNZTESLB` |
-| `submission-validator` | `CDTYY76UHKKSL5LDFGPEDO7DCU4LOR4S3LPHQCEHDA3UYPZDT3P5T3U2` |
-| `payment-streamer` | `CBWUNOBVIFEYKDXVNXSIIYK3WF6FSP6JUKNUAYVVRCVIRO2RP7ZUEILB` |
-| `subscription-market` | `CBSPQORJFRKPYP2OASYWYMBLY7UMIRBQRWOWBRRSQDTNW2B5JORYBYOG` |
-| DMU test token (SAC-wrapped classic asset, issuer = `dm_admin`), reused from the previous deployment | `CAQKKB7WWC52HAWZUVGPQNSRMG5YKVOH7BW5D6N5BASAMTIKWU6QXM6X` |
+| `device-registry` | `CDIM2GOGOW2BUBF4MOE4TUJO3EBULO5L4ES4VF6EEL33YE6ORJJHHL2T` |
+| `submission-validator` | `CCKYFNIVBS34UBH4OK7FSANBLLLDNGMMPCHSFVSJLUMX6XGRFJMN7L4G` |
+| `payment-streamer` | `CAHGKJ624HJC5GSXFF2NUAYPEULQRF66WP67EP3FCRC5ERYCMTM2M5C7` |
+| `subscription-market` | `CAWE7DOPOORGQO65V44MBG43JFFEAOVJ66VABDWTHD3HDIFWZUHKZ7XL` |
+| DMU test token (SAC-wrapped classic asset, issuer = `dm_admin`), reused from every prior deployment | `CAQKKB7WWC52HAWZUVGPQNSRMG5YKVOH7BW5D6N5BASAMTIKWU6QXM6X` |
+
+`submission-validator` was additionally initialized with
+`auto_slash_threshold = 3` (fires `AutoSlashThresholdReached` after 3
+cumulative rejected readings from one device — see the open issue about
+this not yet triggering a real consequence on its own).
 
 DMU is a throwaway testnet-only asset for exercising the payment flow —
 not a real stablecoin. A production deployment would point
@@ -39,42 +45,54 @@ the future, which could never close — see `device-sdk`'s commit fixing
 
 ## What was actually run, on-chain, for real
 
-1. Registered two devices, `dm_device` and `dm_device2` (each signed by
-   its own key), with `device-registry` — confirmed `is_active` returns
-   `true` for both.
-2. Submitted readings to `submission-validator` for the then-current
-   epoch (24): 3 accepted readings from `dm_device`, 2 accepted from
-   `dm_device2` — `get_submission_count` returned `3` and `2`
-   respectively, `get_total_submissions` returned `5`.
-3. `dm_consumer` subscribed for 2 periods (500 DMU/period) via
-   `subscription-market` — confirmed the full `1000` DMU landed directly
-   in `payment-streamer`'s balance (`pool_balance` → `"10000000000"`
-   stroops), with no separate funding step.
-4. Waited for `is_epoch_final(24)` to become `true` (the epoch's real
-   1-hour window closing), then called `claim` for both devices —
-   **the new `payout = epoch_pool * device_count / total_count` formula
-   is exactly what was paid out**: `dm_device` received
-   `10000000000 * 3/5 = 6000000000` stroops (600 DMU), `dm_device2`
-   received `10000000000 * 2/5 = 4000000000` stroops (400 DMU), matching
-   both the `claimed` event and the devices' actual token balances
-   afterward. The pool was snapshotted once on the first claim, not
-   re-read on the second, confirmed by the two payouts summing to
-   exactly the pre-claim pool balance.
-5. Hit a genuine prerequisite along the way, not a contract bug:
+This flow was run twice against two different deployments (the second
+replacing the first once the dispute-slashing contracts landed), and
+both times produced an exact match against the
+`payout = epoch_pool * device_count / total_count` formula — including
+once with genuine third-party contention from another device, not just
+a clean two-device split.
+
+**First deployment** (proportional-payout formula, before dispute-slashing):
+1. Registered `dm_device`/`dm_device2`, submitted 3 and 2 accepted
+   readings respectively for epoch 24 (`get_total_submissions` → `5`).
+2. `dm_consumer` subscribed for 2 periods (1000 DMU landed directly in
+   `payment-streamer`'s balance, `pool_balance` → `"10000000000"`).
+3. After `is_epoch_final(24)` became `true`, `claim` paid out exactly
+   `10000000000 * 3/5 = 6000000000` stroops to `dm_device` and
+   `10000000000 * 2/5 = 4000000000` to `dm_device2` — matching both the
+   `claimed` event and the devices' token balances, and summing to
+   exactly the pre-claim pool balance (confirming the pool is
+   snapshotted once, not re-read per claim).
+4. Hit a genuine prerequisite along the way, not a contract bug:
    `dm_device2`'s claim initially failed with
-   `"trustline entry is missing for account"` — a classic-Stellar
-   asset (DMU, SAC-wrapped) requires the receiving account to hold a
+   `"trustline entry is missing for account"` — a classic-Stellar asset
+   (DMU, SAC-wrapped) requires the receiving account to hold a
    trustline before it can receive a transfer. Fixed with
    `stellar tx new change-trust --source-account dm_device2 --network
-   testnet --line "DMU:<issuer>"`, then the claim succeeded. Any new
-   device identity needs this one-time step before its first claim.
-6. `indexer`'s REST API, polling real testnet RPC, correctly reflected
-   both claims within one poll cycle: `GET
-   /devices/<dm_device>/claims` and `GET /devices/<dm_device2>/claims`
-   returned the exact `6000000000`/`4000000000` payouts and matching
-   `tx_hash`es — confirming the `#[contractevent]` map-shaped event
-   parsing fix (`indexer`'s `parse.ts`) works against this contract
-   code's real on-chain event encoding.
+   testnet --line "DMU:<issuer>"`. See the open issue about surfacing
+   this prerequisite automatically.
+5. `indexer`'s REST API correctly reflected both claims within one poll
+   cycle, confirming the `#[contractevent]` map-shaped event parsing fix
+   works against this contract code's real on-chain event encoding.
+
+**Second deployment** (adds dispute-slashing; same devices re-registered
+against the new `device-registry`, same trustlines carried over since
+they're an account property, not tied to a contract):
+1. Re-registered `dm_device`/`dm_device2`, re-subscribed `dm_consumer`
+   for 2 periods (another `10000000000` stroops into the new
+   `payment-streamer`), and submitted 3 and 2 accepted readings for
+   the then-current epoch (3).
+2. This time `get_total_submissions(3)` came back as `57`, not `5` —
+   the indexer's own bundled `device-sdk` instance (see `indexer`'s
+   README, "device-sdk runs here too") was submitting continuously
+   against the same live contracts throughout that epoch's hour window,
+   contributing the other 52 accepted readings. This is **organic
+   multi-device contention**, not a staged two-device demo.
+3. After `is_epoch_final(3)` became `true`, `claim` paid out exactly
+   `10000000000 * 3/57 = 526315789` stroops to `dm_device` and
+   `10000000000 * 2/57 = 350877192` to `dm_device2` (both floor-divided,
+   matching Soroban's integer arithmetic exactly) — confirmed via both
+   the `claimed` events and `indexer`'s `GET /devices/<address>/claims`.
 
 ## Reproducing this
 
@@ -89,7 +107,7 @@ stellar contract deploy --wasm target/wasm32v1-none/release/device_registry.wasm
 # ...repeat per contract, then stellar contract asset deploy --asset "DMU:$(stellar keys address dm_admin)" ...
 # establish trustlines: stellar tx new change-trust --source-account dm_device --network testnet --line "DMU:$ADMIN"
 # initialize each contract via `stellar contract invoke --id <ID> --source-account dm_admin --network testnet -- initialize ...`
-#   (submission-validator's initialize now also takes --epoch_seconds)
+#   (submission-validator's initialize now also takes --epoch_seconds and --auto_slash_threshold)
 ```
 
 See each contract's README for the exact `initialize` argument lists.
