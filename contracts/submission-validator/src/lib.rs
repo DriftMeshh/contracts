@@ -49,7 +49,7 @@
 //! Set `auto_slash_threshold = 0` to disable the threshold events entirely.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol, Vec,
 };
 
 /// Calling interface for `device-registry` — deliberately just the one
@@ -107,7 +107,18 @@ pub enum Error {
     /// epoch_seconds was passed as 0 to initialize(), which would make every
     /// epoch immediately final (epoch_end = epoch_zero + 0 = epoch_zero).
     InvalidEpochSeconds = 5,
+    /// batch_submit_reading was called with more than MAX_BATCH_SIZE
+    /// readings in one call.
+    BatchTooLarge = 6,
 }
+
+/// Cap on how many readings `batch_submit_reading` accepts in one call.
+/// Each reading does one cross-contract call (`is_active`) plus several
+/// storage reads/writes, so this isn't free — 50 is generous for the
+/// "catch up after intermittent connectivity" use case this entrypoint
+/// exists for, while keeping a single call's resource cost predictable
+/// and comfortably within Soroban's per-invocation CPU/memory limits.
+const MAX_BATCH_SIZE: u32 = 50;
 
 /// Emitted when a reading is submitted (accepted or rejected by outlier check).
 /// Topics: ["reading", device_address]
@@ -318,6 +329,40 @@ impl SubmissionValidator {
     ) -> Result<bool, Error> {
         device.require_auth();
         Self::validate_and_record_reading(&env, device, device_type, region_code, epoch, value)
+    }
+
+    /// Submit several readings from the same device in one transaction —
+    /// for devices that batch up locally during intermittent connectivity
+    /// and sync periodically, instead of paying one transaction's overhead
+    /// per reading. `readings` is `(region_code, epoch, value)` tuples,
+    /// applied in order through the same validation as `submit_reading`.
+    /// Returns the accepted/rejected result for each reading, in the same
+    /// order. Authorizes once for the whole batch, not once per reading.
+    pub fn batch_submit_reading(
+        env: Env,
+        device: Address,
+        device_type: Symbol,
+        readings: Vec<(u32, u32, i32)>,
+    ) -> Result<Vec<bool>, Error> {
+        device.require_auth();
+
+        if readings.len() > MAX_BATCH_SIZE {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut results = Vec::new(&env);
+        for (region_code, epoch, value) in readings.iter() {
+            let accepted = Self::validate_and_record_reading(
+                &env,
+                device.clone(),
+                device_type.clone(),
+                region_code,
+                epoch,
+                value,
+            )?;
+            results.push_back(accepted);
+        }
+        Ok(results)
     }
 
     pub fn get_submission_count(env: Env, device: Address, epoch: u32) -> u32 {
