@@ -545,6 +545,38 @@ mod test {
     }
 
     #[test]
+    fn a_reading_one_second_before_close_is_accepted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let end = validator.epoch_end(&1);
+        env.ledger().with_mut(|li| li.timestamp = end - 1);
+
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        assert!(accepted);
+        assert_eq!(validator.get_submission_count(&device, &1), 1);
+    }
+
+    #[test]
+    fn a_reading_exactly_at_close_is_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let end = validator.epoch_end(&1);
+        env.ledger().with_mut(|li| li.timestamp = end);
+
+        let result = validator.try_submit_reading(&device, &device_type, &1, &1, &2500);
+        assert_eq!(result, Err(Ok(Error::EpochClosed)));
+        assert_eq!(validator.get_submission_count(&device, &1), 0);
+    }
+
+    #[test]
     fn rejects_readings_for_a_closed_epoch() {
         let env = Env::default();
         env.mock_all_auths();
