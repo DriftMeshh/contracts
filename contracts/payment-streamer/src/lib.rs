@@ -99,6 +99,29 @@ pub struct Claimed {
     pub payout: i128,
 }
 
+/// Emitted whenever the admin calls `pause`, so `indexer` and monitoring
+/// scripts can observe it without polling `is_paused`. Emitted on every
+/// call, not just on an actual false->true transition, since `pause` is
+/// idempotent and a repeated pause is still a meaningful admin action to
+/// log (e.g. re-confirming the hold during an ongoing incident).
+/// Topics: ["paused", admin_address]
+#[contractevent]
+#[derive(Clone)]
+pub struct Paused {
+    #[topic]
+    pub admin: Address,
+}
+
+/// Emitted whenever the admin calls `unpause`. See `Paused` for why this
+/// fires on every call rather than only on a true->false transition.
+/// Topics: ["unpaused", admin_address]
+#[contractevent]
+#[derive(Clone)]
+pub struct Unpaused {
+    #[topic]
+    pub admin: Address,
+}
+
 #[contract]
 pub struct PaymentStreamer;
 
@@ -226,6 +249,7 @@ impl PaymentStreamer {
             return Err(Error::NotInitialized);
         }
         env.storage().instance().set(&DataKey::Paused, &true);
+        Paused { admin: admin_caller }.publish(&env);
         Ok(())
     }
 
@@ -241,6 +265,7 @@ impl PaymentStreamer {
             return Err(Error::NotInitialized);
         }
         env.storage().instance().set(&DataKey::Paused, &false);
+        Unpaused { admin: admin_caller }.publish(&env);
         Ok(())
     }
 
@@ -566,5 +591,38 @@ mod test {
         assert!(!streamer.is_paused());
         let payout = streamer.claim(&device, &EPOCH);
         assert_eq!(payout, 1_000);
+    }
+
+    #[test]
+    fn pause_and_unpause_emit_events() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let registry_id = env.register(device_registry::DeviceRegistry, ());
+        let registry_client = device_registry::DeviceRegistryClient::new(&env, &registry_id);
+        registry_client.initialize(&admin);
+
+        let validator_id = env.register(submission_validator::SubmissionValidator, ());
+        let validator_client = submission_validator::SubmissionValidatorClient::new(&env, &validator_id);
+        validator_client.initialize(&admin, &registry_id, &2000, &EPOCH_SECONDS, &0);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_addr = sac.address();
+
+        let streamer_id = env.register(PaymentStreamer, ());
+        let streamer = PaymentStreamerClient::new(&env, &streamer_id);
+        streamer.initialize(&admin, &validator_id, &token_addr);
+
+        streamer.pause(&admin);
+        let expected_paused = Paused { admin: admin.clone() }.to_xdr(&env, &streamer_id);
+        assert_eq!(env.events().all().events().last(), Some(&expected_paused));
+
+        streamer.unpause(&admin);
+        let expected_unpaused = Unpaused { admin: admin.clone() }.to_xdr(&env, &streamer_id);
+        assert_eq!(env.events().all().events().last(), Some(&expected_unpaused));
     }
 }
