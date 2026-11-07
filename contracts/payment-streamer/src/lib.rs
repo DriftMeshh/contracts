@@ -85,6 +85,13 @@ pub enum Error {
     /// The contract has been paused by the admin. All claim calls are
     /// rejected until the admin calls unpause().
     ContractPaused = 6,
+    /// The token transfer to the device failed — in practice this almost
+    /// always means the device's account doesn't hold a trustline to the
+    /// reward asset yet (a classic-Stellar prerequisite for a SAC-wrapped
+    /// asset transfer, not something this contract can establish on the
+    /// device's behalf). Establish a trustline to the reward asset and
+    /// claim again.
+    TransferFailed = 7,
 }
 
 /// Emitted when a device successfully claims its payout for an epoch.
@@ -221,7 +228,16 @@ impl PaymentStreamer {
             return Err(Error::NothingToClaim);
         }
 
-        token_client.transfer(&env.current_contract_address(), &device, &payout);
+        // Use try_transfer rather than transfer so a missing trustline on
+        // the device's account (the most common real-world failure here —
+        // a classic-Stellar prerequisite for receiving a SAC-wrapped asset,
+        // not something this contract can establish on the device's
+        // behalf) surfaces as our own TransferFailed error instead of an
+        // opaque host-level trap with no indication of what went wrong.
+        match token_client.try_transfer(&env.current_contract_address(), &device, &payout) {
+            Ok(Ok(())) => {}
+            _ => return Err(Error::TransferFailed),
+        }
         env.storage().temporary().set(&claimed_key, &true);
         env.storage().temporary().extend_ttl(&claimed_key, 120_960, 120_960);
 
