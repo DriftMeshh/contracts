@@ -177,6 +177,15 @@ impl SubscriptionMarket {
             .get(&DataKey::PricePerPeriod)
             .unwrap_or(0)
     }
+
+    /// Returns the length of one subscription period, in seconds, as set at
+    /// `initialize`. Returns 0 if the contract has not been initialized.
+    pub fn get_period_seconds(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::PeriodSeconds)
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
