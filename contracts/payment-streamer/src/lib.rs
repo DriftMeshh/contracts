@@ -38,6 +38,24 @@
 //! normal operation. Both are idempotent. `is_paused()` is a cheap read-only
 //! view for monitoring scripts and the frontend.
 //! A paused contract returns `Error::ContractPaused` from `claim`.
+//!
+//! ## The device needs a trustline before it can claim
+//!
+//! `reward_token` is a Stellar Asset Contract (SAC) wrapping a classic
+//! asset. Classic Stellar requires an account to hold a trustline to an
+//! asset before it can receive a transfer of that asset — this contract
+//! cannot establish that trustline on a device's behalf, and there's no
+//! cheap way to check for one before attempting the transfer. `claim`
+//! surfaces this as `Error::TransferFailed` (instead of an opaque host
+//! trap) rather than preventing it outright. This is a real prerequisite,
+//! not a hypothetical: it was hit directly during manual testnet
+//! verification of this exact flow — see `TESTNET.md` at the repo root for
+//! the actual failure and fix (`stellar tx new change-trust`). It also
+//! isn't reproducible as a local unit test: this crate's test sandbox
+//! (`Env::register_stellar_asset_contract_v2`) doesn't model classic
+//! trustlines at all, so every test here mints and transfers freely with
+//! no setup — `TESTNET.md`'s live-network reproduction is the real
+//! evidence for this behavior, not a test in this file.
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
