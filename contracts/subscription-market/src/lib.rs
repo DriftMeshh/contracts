@@ -324,4 +324,16 @@ mod test {
         let result = market.try_upgrade(&stranger, &fake_wasm_hash);
         assert_eq!(result, Err(Ok(Error::NotInitialized)));
     }
+
+    #[test]
+    fn get_expiry_for_a_never_subscribed_address_is_zero() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (market, _subscriber, _token_client, _reward_pool) = setup(&env);
+
+        let never_subscribed = Address::generate(&env);
+        assert_eq!(market.get_expiry(&never_subscribed), 0);
+        // Consistent with is_active treating expiry 0 as not active.
+        assert!(!market.is_active(&never_subscribed));
+    }
 }
