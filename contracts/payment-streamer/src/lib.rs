@@ -58,7 +58,8 @@
 //! evidence for this behavior, not a test in this file.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    ContractExecutable, Env,
 };
 
 /// Calling interface for `submission-validator` — see the matching note in
@@ -385,6 +386,26 @@ impl PaymentStreamer {
         };
 
         Ok(pool * (device_count as i128) / (total as i128))
+    }
+
+    /// Replaces this contract's executable with the Wasm at `new_wasm_hash`
+    /// (already uploaded via `env.deployer().upload_contract_wasm`),
+    /// admin-gated the same way `pause`/`unpause` are. Storage layout must
+    /// stay backward-compatible across an upgrade. The new executable only
+    /// takes effect after this invocation finishes.
+    pub fn upgrade(env: Env, admin_caller: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        admin_caller.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin_caller != stored_admin {
+            return Err(Error::NotInitialized);
+        }
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
+        Ok(())
     }
 }
 
