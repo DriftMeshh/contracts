@@ -391,9 +391,20 @@ impl DeviceRegistry {
     }
 
     /// Cheap existence+status check other contracts cross-call before
-    /// trusting a device's submission.
+    /// trusting a device's submission. `register_device` extends this
+    /// entry's TTL by ~1 year once, but a device that's still active years
+    /// later and never calls anything else on this contract again would
+    /// otherwise have its entry archived regardless. Since this is on the
+    /// hot path (called by `submission-validator` on every single
+    /// `submit_reading`), it's the natural place to opportunistically
+    /// refresh the TTL too — a genuinely active device keeps renewing its
+    /// own entry for free, with no separate keep-alive call needed.
     pub fn is_active(env: Env, device: Address) -> bool {
-        let record: Option<Device> = env.storage().persistent().get(&DataKey::Device(device));
+        let key = DataKey::Device(device);
+        let record: Option<Device> = env.storage().persistent().get(&key);
+        if record.is_some() {
+            env.storage().persistent().extend_ttl(&key, 6_307_200, 6_307_200);
+        }
         record.map(|d| d.active).unwrap_or(false)
     }
 }
