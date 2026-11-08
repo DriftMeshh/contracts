@@ -326,6 +326,35 @@ mod test {
     }
 
     #[test]
+    fn subscribe_emits_the_exact_subscribe_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let (token_addr, token_admin, _token_client) = create_token(&env, &admin);
+        let reward_pool = Address::generate(&env);
+
+        let market_id = env.register(SubscriptionMarket, ());
+        let market = SubscriptionMarketClient::new(&env, &market_id);
+        market.initialize(&admin, &token_addr, &reward_pool, &PRICE, &PERIOD_SECONDS);
+
+        let subscriber = Address::generate(&env);
+        token_admin.mint(&subscriber, &10_000);
+        let new_expiry = market.subscribe(&subscriber, &2);
+
+        let expected = Subscribe {
+            subscriber: subscriber.clone(),
+            periods: 2,
+            new_expiry,
+        }
+        .to_xdr(&env, &market_id);
+        assert_eq!(env.events().all().events().last(), Some(&expected));
+    }
+
+    #[test]
     fn get_expiry_for_a_never_subscribed_address_is_zero() {
         let env = Env::default();
         env.mock_all_auths();
