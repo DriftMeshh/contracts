@@ -92,7 +92,7 @@ Requires Rust stable with the `wasm32v1-none` target, and the Stellar CLI
 
 ```bash
 rustup target add wasm32v1-none
-cargo test --workspace        # 35 tests: per-contract units + two e2e flows in tests-e2e
+cargo test --workspace        # 58 tests: per-contract units + two e2e flows in tests-e2e
 stellar contract build        # produces target/wasm32v1-none/release/*.wasm
 ```
 
