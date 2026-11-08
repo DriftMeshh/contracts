@@ -415,6 +415,48 @@ mod test {
     use soroban_sdk::testutils::Address as _;
 
     #[test]
+    fn is_active_refreshes_the_devices_ttl() {
+        use soroban_sdk::testutils::storage::Persistent as _;
+        use soroban_sdk::testutils::Ledger as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        client.register_device(&device, &owner, &Symbol::new(&env, "weather"), &0, &0);
+
+        let key = DataKey::Device(device.clone());
+
+        // Right after registration, the TTL is the full ~1 year extension.
+        let ttl_after_register =
+            env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+        assert_eq!(ttl_after_register, 6_307_200);
+
+        // Advance the ledger far enough that the TTL would have decayed
+        // significantly if nothing ever refreshed it.
+        env.ledger().with_mut(|li| li.sequence_number += 5_000_000);
+        let ttl_before_check =
+            env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+        assert_eq!(ttl_before_check, 6_307_200 - 5_000_000);
+
+        // Calling is_active — the hot path every submit_reading goes
+        // through via submission-validator — refreshes it back to the
+        // full extension, so a genuinely active device never silently
+        // approaches archival.
+        assert!(client.is_active(&device));
+        let ttl_after_check =
+            env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+        assert_eq!(ttl_after_check, 6_307_200);
+    }
+
+    #[test]
     fn register_and_deactivate() {
         let env = Env::default();
         env.mock_all_auths();
