@@ -49,9 +49,9 @@ or two methods it actually needs to call on its neighbour.)
 | Contract | Purpose | Key entrypoints |
 |---|---|---|
 | `device-registry` | A device (its own keypair) registers itself: owner, type, coarse location. Owner/admin can deactivate it. Admin can reactivate. Any address can raise a dispute; admin resolves it (upheld = deactivation). | `register_device`, `deactivate_device`, `reactivate_device`, `is_active`, `get_device`, `raise_dispute`, `resolve_dispute`, `get_dispute_counts` |
-| `submission-validator` | Accepts signed readings, checks the device is active (cross-call), rejects readings that are wildly off the region's rolling average, and counts valid submissions per device per epoch — and per epoch overall. Tracks cumulative rejected readings per device; emits `AutoSlashThresholdReached` when a device's rejection count crosses a configurable threshold. Epochs are time-boxed; once an epoch's window closes its total is frozen (`EpochClosed`). | `submit_reading`, `get_submission_count`, `get_rejected_count`, `get_total_submissions`, `is_epoch_final`, `epoch_end`, `get_region_average` |
-| `payment-streamer` | Pays a device a *proportional share* of an epoch's pool — `epoch_pool * device_count / total_count`, where `total_count` is the epoch's total valid submissions (from `submission-validator`) and `epoch_pool` is snapshotted when the epoch closes. Payout is independent of claim order; a device claims once per epoch. Admin can pause/unpause claim operations. | `claim`, `pool_balance`, `epoch_pool`, `has_claimed`, `pause`, `unpause`, `is_paused` |
-| `subscription-market` | Consumers pay for feed access; payment goes straight into `payment-streamer`'s token balance, closing the funding loop. Admin can update price; price changes emit `PriceUpdated` events. | `subscribe`, `is_active`, `get_expiry`, `get_price`, `set_price` |
+| `submission-validator` | Accepts signed readings, checks the device is active (cross-call), rejects readings that are wildly off the region's rolling average, and counts valid submissions per device per epoch — and per epoch overall. Tracks cumulative rejected readings per device; emits `AutoSlashThresholdReached` when a device's rejection count crosses a configurable threshold. Epochs are time-boxed; once an epoch's window closes its total is frozen (`EpochClosed`). `batch_submit_reading` submits up to 40 readings in one call for devices with intermittent connectivity, reusing the same validation as `submit_reading`. | `submit_reading`, `batch_submit_reading`, `get_submission_count`, `get_rejected_count`, `get_total_submissions`, `is_epoch_final`, `epoch_end`, `get_epoch_zero`, `get_region_average` |
+| `payment-streamer` | Pays a device a *proportional share* of an epoch's pool — `epoch_pool * device_count / total_count`, where `total_count` is the epoch's total valid submissions (from `submission-validator`) and `epoch_pool` is snapshotted when the epoch closes. Payout is independent of claim order; a device claims once per epoch. Admin can pause/unpause claim operations (emitting `Paused`/`Unpaused`). `preview_payout` shows the expected payout without claiming. | `claim`, `preview_payout`, `pool_balance`, `epoch_pool`, `has_claimed`, `pause`, `unpause`, `is_paused` |
+| `subscription-market` | Consumers pay for feed access; payment goes straight into `payment-streamer`'s token balance, closing the funding loop. Admin can update price; price changes emit `PriceUpdated` events. | `subscribe`, `is_active`, `get_expiry`, `get_price`, `get_period_seconds`, `set_price` |
 
 ### Honest limitations (v1 scope)
 
@@ -150,12 +150,12 @@ Scoped so each is a separable GitHub issue at a realistic complexity tier:
 
 **Trivial (100 pts)**
 - ~~Migrate `env.events().publish` calls to the `#[contractevent]` macro in each contract~~ ✅ Done (PR #9)
-- ~~Add `pool_balance`-style view helpers to `subscription-market` (e.g. `get_price`)~~ ✅ Done (this PR)
+- ~~Add `pool_balance`-style view helpers to `subscription-market` (e.g. `get_price`)~~ ✅ Done — `get_price` first, `get_period_seconds` as a follow-up
 - ~~Add doc comments / a CONTRIBUTING.md~~ ✅ Done
 
 **Medium (150 pts)**
-- ~~Add explicit `extend_ttl` / archival handling for `device-registry`'s persistent entries so long-lived devices don't get archived~~ ✅ Done (this PR — device-registry + subscription-market)
-- Add a `batch_submit_reading` entrypoint so a device can submit several readings in one call
+- ~~Add explicit `extend_ttl` / archival handling for `device-registry`'s persistent entries so long-lived devices don't get archived~~ ✅ Done — `register_device`'s one-time ~1yr extension landed first; `is_active` (the hot path on every `submit_reading`) also refreshing it on every call was a follow-up closing the remaining gap (a device active beyond a year with no other contract calls)
+- ~~Add a `batch_submit_reading` entrypoint so a device can submit several readings in one call~~ ✅ Done — capped at 40 per call after empirically finding the originally-planned 50 exceeds Soroban's resource budget
 - ~~Add an admin `pause`/`unpause` switch to `payment-streamer`~~ ✅ Done (this PR)
 - Add geohash-bucket helper utilities to `device-sdk` so `region_code` computation is consistent across clients
 
