@@ -800,4 +800,27 @@ mod test {
         let (open_count, _) = client.get_dispute_counts(&device);
         assert_eq!(open_count, 1); // dispute remains open
     }
+
+    #[test]
+    fn non_admin_cannot_upgrade() {
+        // This only covers the auth-gating half of upgrade(): a real
+        // successful upgrade needs a second compiled Wasm blob to pass to
+        // update_current_contract, which isn't something a unit test can
+        // produce (it would need this crate's own artifact already built,
+        // which cargo test can't guarantee). Confirmed instead by manually
+        // deploying/upgrading on testnet when this lands.
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let stranger = Address::generate(&env);
+        let fake_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let result = client.try_upgrade(&stranger, &fake_wasm_hash);
+        assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
+    }
 }
