@@ -887,4 +887,19 @@ mod test {
         assert_eq!(validator.get_submission_count(&device, &1), 1);
         assert_eq!(validator.get_total_submissions(&1), 1);
     }
+
+    #[test]
+    fn non_admin_cannot_upgrade() {
+        // Covers the auth-gating half only — see device-registry's
+        // non_admin_cannot_upgrade test for why a real successful-upgrade
+        // test isn't something a unit test here can produce.
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, _registry_id) = setup(&env);
+
+        let stranger = Address::generate(&env);
+        let fake_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let result = validator.try_upgrade(&stranger, &fake_wasm_hash);
+        assert_eq!(result, Err(Ok(Error::NotAdmin)));
+    }
 }
