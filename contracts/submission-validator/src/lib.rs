@@ -49,7 +49,8 @@
 //! Set `auto_slash_threshold = 0` to disable the threshold events entirely.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol, Vec,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, Address, BytesN,
+    ContractExecutable, Env, Symbol, Vec,
 };
 
 /// Calling interface for `device-registry` — deliberately just the one
@@ -110,6 +111,8 @@ pub enum Error {
     /// batch_submit_reading was called with more than MAX_BATCH_SIZE
     /// readings in one call.
     BatchTooLarge = 6,
+    /// upgrade was called by an address other than the stored admin.
+    NotAdmin = 7,
 }
 
 /// Cap on how many readings `batch_submit_reading` accepts in one call.
@@ -442,6 +445,26 @@ impl SubmissionValidator {
             Some((sum, count)) if count > 0 => sum / count as i64,
             _ => 0,
         }
+    }
+
+    /// Replaces this contract's executable with the Wasm at `new_wasm_hash`
+    /// (already uploaded via `env.deployer().upload_contract_wasm`),
+    /// admin-gated. Storage layout must stay backward-compatible across an
+    /// upgrade. The new executable only takes effect after this invocation
+    /// finishes.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::NotAdmin);
+        }
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
+        Ok(())
     }
 }
 
