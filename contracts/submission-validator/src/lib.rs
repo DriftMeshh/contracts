@@ -114,11 +114,16 @@ pub enum Error {
 
 /// Cap on how many readings `batch_submit_reading` accepts in one call.
 /// Each reading does one cross-contract call (`is_active`) plus several
-/// storage reads/writes, so this isn't free — 50 is generous for the
-/// "catch up after intermittent connectivity" use case this entrypoint
-/// exists for, while keeping a single call's resource cost predictable
-/// and comfortably within Soroban's per-invocation CPU/memory limits.
-const MAX_BATCH_SIZE: u32 = 50;
+/// storage reads/writes, so this isn't free. This value isn't a guess:
+/// empirically probing the test environment's resource budget found 48
+/// readings in one call still succeeds but 50 exceeds it
+/// (`HostError: Error(Budget, ExceededLimit)`) — the real ceiling sits
+/// somewhere in between. 40 keeps a clear safety margin below that
+/// measured edge (for budget variance between the test harness and a
+/// real network, and room for this contract's per-reading cost to grow
+/// slightly in the future) while still comfortably covering the
+/// "catch up after intermittent connectivity" use case this exists for.
+const MAX_BATCH_SIZE: u32 = 40;
 
 /// Emitted when a reading is submitted (accepted or rejected by outlier check).
 /// Topics: ["reading", device_address]
@@ -616,6 +621,49 @@ mod test {
         assert_eq!(validator.get_total_submissions(&1), 3);
         // The rejected reading is still tracked for auto-slash purposes.
         assert_eq!(validator.get_rejected_count(&device), 1);
+    }
+
+    #[test]
+    fn batch_submit_reading_over_max_size_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let mut readings: Vec<(u32, u32, i32)> = Vec::new(&env);
+        for _ in 0..(MAX_BATCH_SIZE + 1) {
+            readings.push_back((1u32, 1u32, 2500i32));
+        }
+
+        let result = validator.try_batch_submit_reading(&device, &device_type, &readings);
+        assert_eq!(result, Err(Ok(Error::BatchTooLarge)));
+        // Nothing from the oversized batch should have been recorded.
+        assert_eq!(validator.get_submission_count(&device, &1), 0);
+        assert_eq!(validator.get_total_submissions(&1), 0);
+    }
+
+    #[test]
+    fn batch_submit_reading_at_exactly_max_size_accepted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let mut readings: Vec<(u32, u32, i32)> = Vec::new(&env);
+        for _ in 0..MAX_BATCH_SIZE {
+            readings.push_back((1u32, 1u32, 2500i32));
+        }
+
+        // This is also the test that empirically confirmed MAX_BATCH_SIZE
+        // fits within Soroban's per-invocation resource budget — it's what
+        // caught that 50 (the originally-guessed value) actually exceeded
+        // it (HostError: Error(Budget, ExceededLimit)) before this was
+        // lowered to 40.
+        let results = validator.batch_submit_reading(&device, &device_type, &readings);
+        assert_eq!(results.len(), MAX_BATCH_SIZE);
+        assert_eq!(validator.get_submission_count(&device, &1), MAX_BATCH_SIZE);
     }
 
     #[test]
