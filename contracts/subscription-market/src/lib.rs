@@ -7,7 +7,10 @@
 //! balance — this contract never custodies funds itself — closing the
 //! loop: subscribers fund the pool, devices claim out of it.
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN, ContractExecutable,
+    Env,
+};
 
 #[contracttype]
 pub enum DataKey {
@@ -185,6 +188,22 @@ impl SubscriptionMarket {
             .instance()
             .get(&DataKey::PeriodSeconds)
             .unwrap_or(0)
+    }
+
+    /// Replaces this contract's executable with the Wasm at `new_wasm_hash`
+    /// (already uploaded via `env.deployer().upload_contract_wasm`),
+    /// admin-gated the same way `set_price` already is. Storage layout
+    /// must stay backward-compatible across an upgrade. The new executable
+    /// only takes effect after this invocation finishes.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
+        if stored_admin.as_ref() != Some(&admin) {
+            return Err(Error::NotInitialized);
+        }
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
+        Ok(())
     }
 }
 
