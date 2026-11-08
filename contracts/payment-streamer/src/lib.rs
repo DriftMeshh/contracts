@@ -736,6 +736,29 @@ mod test {
     }
 
     #[test]
+    fn claim_emits_the_exact_claimed_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id, streamer, streamer_id, token_admin, _token) = wire(&env);
+        let device = register_device(&env, &validator, &registry_id, 3);
+
+        token_admin.mint(&streamer_id, &1_000);
+        finalize_epoch(&env, &validator);
+
+        let payout = streamer.claim(&device, &EPOCH);
+        let expected = Claimed {
+            device: device.clone(),
+            epoch: EPOCH,
+            payout,
+        }
+        .to_xdr(&env, &streamer_id);
+        assert_eq!(env.events().all().events().last(), Some(&expected));
+    }
+
+    #[test]
     fn preview_payout_matches_the_not_yet_claimed_live_balance() {
         let env = Env::default();
         env.mock_all_auths();
