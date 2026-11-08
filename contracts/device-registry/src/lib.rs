@@ -823,4 +823,22 @@ mod test {
         let result = client.try_upgrade(&stranger, &fake_wasm_hash);
         assert_eq!(result, Err(Ok(Error::NotOwnerOrAdmin)));
     }
+
+    #[test]
+    fn get_device_on_unregistered_address_returns_device_not_found() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let never_registered = Address::generate(&env);
+        let result = client.try_get_device(&never_registered);
+        // Device doesn't derive PartialEq/Debug, so match the error shape
+        // directly rather than assert_eq!-ing the whole Result<Device, _>.
+        assert!(matches!(result, Err(Ok(Error::DeviceNotFound))));
+    }
 }
