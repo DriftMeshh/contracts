@@ -31,7 +31,10 @@
 //!   must wait for resolution before raising another claim.
 //! - No staking bond is required in v1 (issue #6 not yet landed).
 
-use soroban_sdk::{contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, ContractExecutable, Env,
+    Symbol,
+};
 
 #[contracttype]
 #[derive(Clone)]
@@ -406,6 +409,28 @@ impl DeviceRegistry {
             env.storage().persistent().extend_ttl(&key, 6_307_200, 6_307_200);
         }
         record.map(|d| d.active).unwrap_or(false)
+    }
+
+    /// Replaces this contract's executable with the Wasm at `new_wasm_hash`
+    /// (already uploaded via `env.deployer().upload_contract_wasm`),
+    /// admin-gated. Storage layout must stay backward-compatible across an
+    /// upgrade — adding new `DataKey` variants is safe, reordering or
+    /// removing existing ones is not, since old persistent entries were
+    /// written under the old encoding. The new executable only takes
+    /// effect after this invocation finishes.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::NotOwnerOrAdmin);
+        }
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(new_wasm_hash));
+        Ok(())
     }
 }
 
