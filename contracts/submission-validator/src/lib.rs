@@ -647,6 +647,22 @@ mod test {
     }
 
     #[test]
+    fn batch_submit_reading_with_empty_list_is_a_harmless_no_op() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let empty: Vec<(u32, u32, i32)> = Vec::new(&env);
+        let results = validator.batch_submit_reading(&device, &device_type, &empty);
+
+        assert_eq!(results.len(), 0);
+        assert_eq!(validator.get_submission_count(&device, &1), 0);
+        assert_eq!(validator.get_total_submissions(&1), 0);
+    }
+
+    #[test]
     fn batch_submit_reading_over_max_size_rejected() {
         let env = Env::default();
         env.mock_all_auths();
