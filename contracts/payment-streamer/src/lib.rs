@@ -38,6 +38,10 @@
 //! normal operation. Both are idempotent. `is_paused()` is a cheap read-only
 //! view for monitoring scripts and the frontend.
 //! A paused contract returns `Error::ContractPaused` from `claim`.
+//! This is the circuit breaker issue #5 asked for — landed as separate
+//! `pause`/`unpause` entrypoints and `Error::ContractPaused` rather than
+//! the `set_paused(bool)`/`Error::Paused` shape that issue originally
+//! sketched, but the same admin-gated on/off switch in front of `claim`.
 //!
 //! ## The device needs a trustline before it can claim
 //!
