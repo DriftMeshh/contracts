@@ -904,6 +904,9 @@ mod test {
 
     #[test]
     fn auto_slash_threshold_fires_at_configured_count() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
         let env = Env::default();
         env.mock_all_auths();
         // threshold=3: event fires on the 3rd rejected reading.
@@ -917,12 +920,24 @@ mod test {
         // Two outliers — below threshold, no event yet.
         validator.submit_reading(&device, &device_type, &1, &1, &999_999);
         validator.submit_reading(&device, &device_type, &1, &1, &999_998);
-        assert_eq!(validator.get_rejected_count(&device), 2);
 
         // Third outlier — crosses the threshold. The event is emitted here.
-        // We verify the final state; event emission is verified by the fact
-        // that the contract doesn't panic and the counts are correct.
+        // The test env's event buffer only holds the most recently invoked
+        // call's events (any further client call, even a read-only getter,
+        // clears it), so the event must be checked right after this call
+        // and before any other client method runs.
         validator.submit_reading(&device, &device_type, &1, &1, &999_997);
+        let expected = AutoSlashThresholdReached {
+            device: device.clone(),
+            rejected_count: 3,
+            threshold: 3,
+        }
+        .to_xdr(&env, &validator.address);
+        // This same call also publishes a trailing Reading event, so
+        // AutoSlashThresholdReached isn't the *only* (or necessarily last)
+        // event — check it's present rather than assuming position.
+        assert!(env.events().all().events().contains(&expected));
+
         assert_eq!(validator.get_rejected_count(&device), 3);
         // Accepted count and epoch total are unaffected by all the rejections.
         assert_eq!(validator.get_submission_count(&device, &1), 1);
