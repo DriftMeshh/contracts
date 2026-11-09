@@ -576,6 +576,31 @@ mod test {
     }
 
     #[test]
+    fn submit_reading_emits_the_exact_reading_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let (validator, registry_id) = setup(&env);
+        let device = register(&env, &validator, &registry_id, 0, 1);
+        let device_type = Symbol::new(&env, "weather");
+
+        let accepted = validator.submit_reading(&device, &device_type, &1, &1, &2500);
+        assert!(accepted);
+
+        let expected = Reading {
+            device: device.clone(),
+            region_code: 1,
+            epoch: 1,
+            value: 2500,
+            accepted: true,
+        }
+        .to_xdr(&env, &validator.address);
+        assert_eq!(env.events().all().events().last(), Some(&expected));
+    }
+
+    #[test]
     fn accepts_plausible_readings_and_counts_them() {
         let env = Env::default();
         env.mock_all_auths();
