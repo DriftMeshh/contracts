@@ -482,6 +482,33 @@ mod test {
     }
 
     #[test]
+    fn register_device_emits_the_exact_regdev_event() {
+        use soroban_sdk::testutils::Events as _;
+        use soroban_sdk::Event as _;
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(DeviceRegistry, ());
+        let client = DeviceRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let device = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let device_type = Symbol::new(&env, "weather");
+        client.register_device(&device, &owner, &device_type, &404_500, &-736_900);
+
+        let expected = RegDev {
+            device: device.clone(),
+            device_type: device_type.clone(),
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all().events().last(), Some(&expected));
+    }
+
+    #[test]
     fn register_and_deactivate() {
         let env = Env::default();
         env.mock_all_auths();
