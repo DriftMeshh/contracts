@@ -16,7 +16,7 @@ coming from Wave finds exactly what they expect.
 
    ```bash
    rustup target add wasm32v1-none
-   cargo test --workspace   # 58 tests should pass (15 device-registry + 20 submission-validator + 14 payment-streamer + 7 subscription-market + 2 e2e)
+   cargo test --workspace   # 64 tests should pass (17 device-registry + 21 submission-validator + 15 payment-streamer + 9 subscription-market + 2 e2e)
    stellar contract build   # should produce 4 wasm files with no errors
    ```
 
