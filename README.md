@@ -28,8 +28,8 @@ library + simulator a sensor runs to sign and submit readings), and `app`
                         │ valid reading count            └────────────────┘
                         │ per device per epoch
                         ▼
-            ┌─────────────────────┐        funds pool       ┌──────────────────┐
-            │  payment-streamer   │◀────────────────────────│ subscription-market│
+            ┌─────────────────────┐   funds pool (minus a   ┌──────────────────┐
+            │  payment-streamer   │◀──protocol fee, if any──│ subscription-market│
             │  pays devices per   │   subscriber payment,   │  consumers pay for │
             │  valid submission,  │   sent straight to      │  feed access       │
             │  capped by balance  │   streamer's own balance│                    │
@@ -51,7 +51,7 @@ or two methods it actually needs to call on its neighbour.)
 | `device-registry` | A device (its own keypair) registers itself: owner, type, coarse location. Owner/admin can deactivate it. Admin can reactivate. Any address can raise a dispute; admin resolves it (upheld = deactivation). | `register_device`, `deactivate_device`, `reactivate_device`, `is_active`, `get_device`, `raise_dispute`, `resolve_dispute`, `get_dispute_counts`, `upgrade` |
 | `submission-validator` | Accepts signed readings, checks the device is active (cross-call), rejects readings that are wildly off the region's rolling average, and counts valid submissions per device per epoch — and per epoch overall. Tracks cumulative rejected readings per device; emits `AutoSlashThresholdReached` when a device's rejection count crosses a configurable threshold. Epochs are time-boxed; once an epoch's window closes its total is frozen (`EpochClosed`). `batch_submit_reading` submits up to 40 readings in one call for devices with intermittent connectivity, reusing the same validation as `submit_reading`. | `submit_reading`, `batch_submit_reading`, `get_submission_count`, `get_rejected_count`, `get_total_submissions`, `is_epoch_final`, `epoch_end`, `get_epoch_zero`, `get_region_average`, `upgrade` |
 | `payment-streamer` | Pays a device a *proportional share* of an epoch's pool — `epoch_pool * device_count / total_count`, where `total_count` is the epoch's total valid submissions (from `submission-validator`) and `epoch_pool` is snapshotted when the epoch closes. Payout is independent of claim order; a device claims once per epoch. Admin can pause/unpause claim operations (emitting `Paused`/`Unpaused`). `preview_payout` shows the expected payout without claiming. | `claim`, `preview_payout`, `pool_balance`, `epoch_pool`, `has_claimed`, `pause`, `unpause`, `is_paused`, `upgrade` |
-| `subscription-market` | Consumers pay for feed access; payment goes straight into `payment-streamer`'s token balance, closing the funding loop. Admin can update price; price changes emit `PriceUpdated` events. | `subscribe`, `is_active`, `get_expiry`, `get_price`, `get_period_seconds`, `set_price`, `upgrade` |
+| `subscription-market` | Consumers pay for feed access. A protocol fee (basis points, capped at 50%) is taken off the top and sent to `fee_recipient`; the remainder — not the full payment — funds `payment-streamer`'s pool. Admin can update price and fee; both emit events (`PriceUpdated`, `FeeUpdated`). | `subscribe`, `is_active`, `get_expiry`, `get_price`, `get_period_seconds`, `set_price`, `get_fee_bps`, `get_fee_recipient`, `set_fee`, `upgrade` |
 
 All four contracts also now have an admin-gated `upgrade(new_wasm_hash)`
 entrypoint (via Soroban's `update_current_contract`), so adopting new
