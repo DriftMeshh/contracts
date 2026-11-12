@@ -69,7 +69,19 @@ mod e2e {
         let period_seconds: u64 = 86_400;
         let market_id = env.register(SubscriptionMarket, ());
         let market = SubscriptionMarketClient::new(&env, &market_id);
-        market.initialize(&admin, &token_addr, &streamer_id, &price_per_period, &period_seconds);
+        // No protocol fee in this end-to-end test — it's exercising the
+        // core register/submit/subscribe/claim loop, not fee economics
+        // (see subscription-market's own tests for that).
+        let fee_recipient = Address::generate(&env);
+        market.initialize(
+            &admin,
+            &token_addr,
+            &streamer_id,
+            &price_per_period,
+            &period_seconds,
+            &0,
+            &fee_recipient,
+        );
 
         let consumer = Address::generate(&env);
         token_admin.mint(&consumer, &10_000);
